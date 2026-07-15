@@ -1,0 +1,120 @@
+# -----------------------------------------------------------------------------
+# BUILD SYSTEM
+# -----------------------------------------------------------------------------
+
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [
+    "setuptools >=64.0.0",
+    "wheel >=0.40.0",
+]
+
+
+# -----------------------------------------------------------------------------
+# PROJECT AND DEPENDENCIES
+# -----------------------------------------------------------------------------
+
+[project]
+name = "hiprof"
+version = "0.0.1"
+description = "Hi Prof 👋: High-Probability Falsifier"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "GNU Affero General Public License v3.0"}
+authors = [
+    {name = "Francesco Freni"},
+    {name = "Sebastian Weichwald"},
+    {name = "Leonard Henckel"}
+]
+keywords = ["causal graphical models", "falsification", "high-probability falsifier",
+            "identification", "verification"]
+dependencies = [
+    "ananke-causal",
+    "graphviz",
+    "lark",
+    "numpy",
+    "pandas",
+    "python-flint",
+    "tqdm",
+    "y0==0.2.11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black[d]",
+    "coverage",
+    "mypy",
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "types-PyYAML",
+]
+
+[project.scripts]
+hiprof = "hiprof.ui:main"
+
+# -----------------------------------------------------------------------------
+# TOOL CONFIGURATION
+# -----------------------------------------------------------------------------
+
+[tool.black]
+line-length = 79
+target-version = ['py310']
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+warn_unused_configs = true
+warn_return_any = true
+warn_redundant_casts = true
+warn_unreachable = true
+ignore_missing_imports = true
+disallow_untyped_calls = true
+no_implicit_optional = true
+disallow_untyped_defs = true
+
+[tool.pyright]
+pythonVersion = "3.10"
+reportPrivateImportUsage = "none"
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::FutureWarning",
+]
+testpaths = [
+    "tests",
+]
+# deselect tests with -m "not <marker>"
+markers = [
+    "slow: unit tests that are slow",
+]
+
+[tool.ruff]
+line-length = 79
+target-version = "py310"
+output-format = "grouped"
+
+[tool.ruff.lint]
+select = [
+    "F",
+    "E",
+    "W",
+    "B",
+    "C90",
+    "I",
+]
+preview = true
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hiprof*"]
+
+[tool.setuptools.package-data]
+hiprof = ["formula/grammar.lark"]

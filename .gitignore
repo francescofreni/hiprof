@@ -1,0 +1,15 @@
+build/
+*.egg-info/
+*.csv
+*.txt
+*.png
+.idea/
+*.pdf
+
+!images/*.png
+!images/*.pdf
+
+__pycache__/
+*.py[cod]
+
+.DS_Store

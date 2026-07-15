@@ -1,0 +1,61 @@
+// ---------- Terminals ----------
+%import common.SIGNED_NUMBER
+%import common.WS
+%ignore WS
+
+SUM_OP: /[Ss][Uu][Mm]_/
+INT_OP: /[Ii][Nn][Tt]_/
+VAR: /[A-Za-z][A-Za-z0-9_]*('+[0-9]*)?/
+
+// ---- Entry point ----
+?start: expr
+
+// ---- Expression precedence ----
+// Lowest: *, /
+// Then:   parentheses, integrals, sums, p(...)
+?expr: product
+
+?product: product "*" unary  -> mul
+        | product "/" unary  -> div
+        | unary
+        | product unary      -> mul
+
+?unary: atom
+
+// ---- Atomic expressions ----
+?atom: integral
+     | summation
+     | distribution
+     | "(" expr ")"
+
+// ---- Distribution p(...) ----
+// p(Y | X = 1, A, K)
+// p(Y, Z1, Z3 | X = 1, Z1, Z3)
+// p(A, K)
+distribution: "p" "(" var_list cond? ")"  -> dist
+
+// Y, Z1, Z3 or Y = 1
+var_list: var_item ("," var_item)*  -> item_list
+
+var_item: VAR "=" value  -> var_eq
+        | VAR            -> var_name
+
+// | X = 1, A, K
+cond: "|" cond_list
+
+cond_list: cond_item ("," cond_item)*  -> item_list
+
+cond_item: VAR "=" value  -> var_eq
+         | VAR            -> var_name
+
+// Numeric constant after the falsifier has replaced placeholders.
+?value: SIGNED_NUMBER  -> number
+
+// For INT_{...}, SUM_{...}: names only.
+name_list: VAR ("," VAR)*  -> name_list
+
+// ---- Integral INT_{...} ----
+integral: INT_OP "{" name_list "}" "{" expr "}" -> integral
+
+// ---- Sum SUM_{...} ----
+summation: SUM_OP "{" name_list "}" "{" expr "}" -> summation

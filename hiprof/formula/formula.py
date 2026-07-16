@@ -1,248 +1,151 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Tuple, Any, Iterable, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from hiprof.formula.visitors import FormulaVisitor
+from dataclasses import dataclass
+from typing import Iterable
 
 
-class Formula(ABC):
-    """
-    Abstract base class for formulas, which is the root of the Abstract Syntax Tree (AST).
-    """
+@dataclass(frozen=True)
+class Variable:
+    """A user-chosen name, optionally carrying a copy index.
 
-    @abstractmethod
-    def accept(self, visitor: FormulaVisitor) -> Any:
-        """
-        Dispatch this node to a visitor.
-
-        Parameters
-        ----------
-        visitor : FormulaVisitor
-            A FormulaVisitor instance that implements a
-            visit method for this formula type.
-
-        Returns
-        -------
-        Any
-            The result of the visitor's method. The actual type
-            depends on the particular visitor.
-        """
-        pass
-
-    def __mul__(self, other: Formula) -> Formula:
-        """
-        Multiply two formulas (formula product).
-
-        Parameters
-        ----------
-        other : Formula
-            The formula to be multiplied with this one.
-
-        Returns
-        -------
-        Formula
-            New formula representing the product.
-        """
-        return Product.from_two(self, other)
-
-    def __truediv__(self, other: Formula) -> Formula:
-        """
-        Divide two formulas (formula division).
-
-        Parameters
-        ----------
-        other : Formula
-            The formula that this one is divided by.
-
-        Returns
-        -------
-        Formula
-            New formula representing the division.
-        """
-        return Division(numerator=self, denominator=other)
-
-
-class Distribution(Formula):
-    """
-    Represents a (possibly conditional) probability distribution.
+    Names are opaque, only the suffix after a prime has structure,
+    so X' and X'2 are copies of X.
     """
 
-    def __init__(
-        self,
-        targets: Tuple[str, ...],
-        given: Tuple[str, ...],
-    ) -> None:
-        """
-        Initialize the distribution class.
+    name: str
+    copy_index: int | None = None
 
-        Parameters
-        ----------
-        targets : Tuple[str, ...]
-            Tuple of variable names.
-        given : Tuple[str, ...]
-            Tuple of variables we condition on.
-            Empty for a marginal distribution.
-        """
-        self.targets = targets
-        self.given = given
+    @classmethod
+    def from_token(cls, text: str) -> Variable:
+        # Lark has already checked:
+        # [A-Z]+(?:0|[1-9][0-9]*)?(?:'(?:0|[1-9][0-9]*)?)?
 
-    def accept(self, visitor: FormulaVisitor) -> Any:
-        """
-        Dispatch this node to a visitor.visit_distribution.
-        """
-        return visitor.visit_distribution(self)
+        if "'" not in text:
+            return cls(text)
+        name, suffix = text.split("'", maxsplit=1)
+        return cls(name, 0 if suffix == "" else int(suffix))
+
+    @property
+    def original(self) -> Variable:
+        return Variable(self.name)
+
+    def __str__(self) -> str:
+        if self.copy_index is None:
+            return self.name
+        suffix = "" if self.copy_index == 0 else str(self.copy_index)
+        return f"{self.name}'{suffix}"
 
 
+class Formula:
+    pass
+
+
+@dataclass(frozen=True)
+class BaseKernel(Formula):
+    outputs: tuple[Variable, ...]
+    inputs: tuple[Variable, ...] = ()
+
+
+@dataclass(frozen=True)
+class BaseQuotient(Formula):
+    """Parser-level syntax; validation normalises this to an ICD node."""
+
+    numerator: BaseKernel
+    denominator: BaseKernel
+
+
+@dataclass(frozen=True)
 class Product(Formula):
-    """
-    Represents the product of multiple formulas.
-    """
-
-    def __init__(self, terms: Tuple[Formula, ...]):
-        """
-        Initialize the product class.
-
-        Parameters
-        ----------
-        terms : Tuple[Formula, ...]
-            A tuple of Formula instances to be multiplied together.
-        """
-        self.terms = terms
-
-    def accept(self, visitor: FormulaVisitor) -> Any:
-        """
-        Dispatch this node to a visitor.visit_product.
-        """
-        return visitor.visit_product(self)
-
-    @staticmethod
-    def from_two(a: Formula, b: Formula) -> Product:
-        """
-        Build the product from two formulas.
-
-        If either 'a' or 'b' is already a Product, its terms are
-        flattened so that nested products do not create nested Product
-        nodes in the AST.
-
-        Parameters
-        ----------
-        a, b : Formula, Formula
-            Two formulas to combine.
-
-        Returns
-        -------
-        Product
-            A Product with all terms.
-        """
-
-        def to_terms(x: Formula) -> Iterable[Formula]:
-            if isinstance(x, Product):
-                return x.terms
-            return (x,)
-
-        terms = tuple(list(to_terms(a)) + list(to_terms(b)))
-        return Product(terms)
+    # After validation, factors are stored in a valid ltr sequential order.
+    # Evaluators may use the left fold ((E1 E2) E3) ... Ek.
+    factors: tuple[Formula, ...]
 
 
-class Division(Formula):
-    """
-    Represents the division of two formulas.
-    """
-
-    def __init__(
-        self,
-        numerator: Formula,
-        denominator: Formula,
-    ) -> None:
-        """
-        Initialize the division class.
-
-        Parameters
-        ----------
-        numerator, denominator : Formula, Formula
-            Two formulas to divide.
-        """
-        self.numerator = numerator
-        self.denominator = denominator
-
-    def accept(self, visitor: FormulaVisitor) -> Any:
-        """
-        Dispatch this node to a visitor.visit_division.
-        """
-        return visitor.visit_division(self)
+@dataclass(frozen=True)
+class Marginalisation(Formula):
+    variables: tuple[Variable, ...]
+    body: Formula
 
 
-class Integral(Formula):
-    """
-    Represents an integral over one or more variables.
-    """
-
-    def __init__(
-        self,
-        integrand: Formula,
-        over: Tuple[str, ...],
-    ) -> None:
-        """
-        Initialize the integral class.
-
-        Parameters
-        ----------
-        integrand : Formula
-            The formula being integrated.
-        over : Tuple[str, ...]
-            Tuple of variable names to integrate out.
-        """
-        self.integrand = integrand
-        self.over = over
-
-    def accept(self, visitor: FormulaVisitor) -> Any:
-        """
-        Dispatch this node to a visitor.visit_integral.
-        """
-        return visitor.visit_integral(self)
+@dataclass(frozen=True)
+class InternalConditionalDivision(Formula):
+    denominator_outputs: tuple[Variable, ...]
+    denominator_inputs: tuple[Variable, ...]
+    body: Formula
 
 
-def p(
-    targets: Tuple[str, ...],
-    given: Tuple[str, ...] = (),
-) -> Distribution:
-    """
-    Constructor for Distribution.
+@dataclass(frozen=True)
+class KernelSignature:
+    outputs: frozenset[Variable]
+    inputs: frozenset[Variable]
 
-    Parameters
-    ----------
-    targets : Tuple[str, ...]
-        Tuple of variables names.
-    given : Tuple[str, ...]
-        Tuple of variables we condition on. Empty for a marginal distribution.
-
-    Returns
-    -------
-    Distribution
-        A node representing the distribution.
-    """
-    return Distribution(targets=tuple(targets), given=tuple(given))
+    def __str__(self) -> str:
+        return f"{_format_set(self.outputs)} | {_format_set(self.inputs)}"
 
 
-def integrate(
-    integrand: Formula,
-    over: Tuple[str, ...],
-) -> Integral:
-    """
-    Constructor for Integral.
+def _format_set(variables: Iterable[Variable]) -> str:
+    text = ", ".join(str(variable) for variable in sorted(variables, key=str))
+    return text or "empty"
 
-    Parameters
-    ----------
-    integrand : Formula
-        The formula to be integrated.
-    over : Tuple[str, ...]
-        Variables of integration.
 
-    Returns
-    -------
-    Integral
-        An integral node representing the operation.
-    """
-    return Integral(integrand=integrand, over=tuple(over))
+def _tuple_text(variables: tuple[Variable, ...]) -> str:
+    if not variables:
+        return "()"
+    text = ", ".join(map(str, variables))
+    return f"({text + ',' if len(variables) == 1 else text})"
+
+
+def format_ast(formula: Formula, indent: int = 0) -> str:
+    prefix = " " * indent
+    field = " " * (indent + 4)
+
+    if isinstance(formula, BaseKernel):
+        return (
+            f"{prefix}BaseKernel(\n"
+            f"{field}outputs={_tuple_text(formula.outputs)},\n"
+            f"{field}inputs={_tuple_text(formula.inputs)},\n"
+            f"{prefix})"
+        )
+
+    if isinstance(formula, BaseQuotient):
+        numerator = format_ast(formula.numerator, indent + 8)
+        denominator = format_ast(formula.denominator, indent + 8)
+        return (
+            f"{prefix}BaseQuotient(\n"
+            f"{field}numerator=(\n{numerator}\n{field}),\n"
+            f"{field}denominator=(\n{denominator}\n{field}),\n"
+            f"{prefix})"
+        )
+
+    if isinstance(formula, Product):
+        factors = ",\n".join(
+            format_ast(factor, indent + 8) for factor in formula.factors
+        )
+        return (
+            f"{prefix}Product(\n"
+            f"{field}factors=(\n{factors},\n"
+            f"{field}),\n{prefix})"
+        )
+
+    if isinstance(formula, Marginalisation):
+        body = format_ast(formula.body, indent + 8)
+        return (
+            f"{prefix}Marginalisation(\n"
+            f"{field}variables={_tuple_text(formula.variables)},\n"
+            f"{field}body=(\n{body}\n{field}),\n"
+            f"{prefix})"
+        )
+
+    if isinstance(formula, InternalConditionalDivision):
+        body = format_ast(formula.body, indent + 8)
+        return (
+            f"{prefix}InternalConditionalDivision(\n"
+            f"{field}denominator_outputs="
+            f"{_tuple_text(formula.denominator_outputs)},\n"
+            f"{field}denominator_inputs="
+            f"{_tuple_text(formula.denominator_inputs)},\n"
+            f"{field}body=(\n{body}\n{field}),\n"
+            f"{prefix})"
+        )
+
+    raise TypeError(f"Unknown formula node: {type(formula).__name__}")

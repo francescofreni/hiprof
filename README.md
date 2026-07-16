@@ -36,3 +36,15 @@ pip install -e .
 
 The code in [notebooks/](./notebooks/) demonstrates the core functionalities and main functions of `hiprof`.
 For an introduction, see [notebooks/demo.ipynb](./notebooks/demo.ipynb).
+
+## 📜 Citation
+
+If you use `hiprof` in your scientific work, please cite [this paper](https://arxiv.org/abs/2607.13883) introducing verification:
+```bibtex
+@article{hiprof2026,
+  author  = {Francesco Freni and Leonard Henckel and Sebastian Weichwald},
+  title   = {{Verifying formulas for interventional distributions}},
+  journal = {{arXiv preprint arXiv:2607.13883}},
+  year    = {2026}
+}
+```

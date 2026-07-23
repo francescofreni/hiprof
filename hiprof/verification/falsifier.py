@@ -1,1061 +1,633 @@
-import os
-import re
-import random
-import numpy as np
-import pandas as pd
-from typing import Any, Tuple, List
-
-from flint import fmpq
-from tqdm import tqdm
-from lark import Lark
-
-from hiprof.base.basetask import BaseCausalTask
-from hiprof.base.parameter import Normal, Gamma
-from hiprof.base.canonicalform import (
-    CanonicalForm,
-    ExactCanonicalForm,
-    marginal,
-    conditional,
-    exact_marginal,
-    exact_conditional,
-)
-from hiprof.base.graph import Graph
-from hiprof.base.utils import solve_spd, logdet_spd, to_fmpq
-from hiprof.formula.visitors import CanonicalFormVisitor
-from hiprof.formula.formula import Formula
-from hiprof.formula.transformer import TreeToFormula, normalize_var_name
+from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass
+from fractions import Fraction
+from random import getrandbits
+from typing import Sequence
 
-# suppress some ananke-related warnings that are safe to ignore
+from flint import fmpq_mat, fmpz
+
+from hiprof.base.graph import Graph, parse_graph
+from hiprof.formula.formula import Variable
+from hiprof.formula.validation import ValidationResult, parse_and_validate
+from hiprof.utils import format_variables
+
+from .degree import DegreeBound, DegreeBoundEvaluator
+from .gaussian import GaussianDistribution, GaussianEvaluator, GaussianKernel
+from .utils import align_columns, submatrix
+
+
+# Suppress some ananke-related warnings that are safe to ignore.
 warnings.filterwarnings(
-    "ignore", category=FutureWarning, module="google.api_core"
+    "ignore",
+    category=FutureWarning,
+    module="google.api_core",
 )
-warnings.filterwarnings("ignore", message=".*IProgress not found.*")
-warnings.filterwarnings("ignore", category=FutureWarning, module=r"pgmpy\..*")
+warnings.filterwarnings(
+    "ignore",
+    message=".*IProgress not found.*",
+)
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module=r"pgmpy\..*",
+)
+
 from ananke import graphs, identification
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_VAR = r"[A-Za-z][A-Za-z0-9_]*(?:'+[0-9]*)?"
-_PLACEHOLDER_ITEM = re.compile(rf"^\s*({_VAR})\s*=\s*\.\s*$")
-_PLACEHOLDER = re.compile(rf"\b({_VAR})\s*=\s*\.")
+
+_DEFAULT_ENTROPY_BITS = 64
+_DEFAULT_TARGET_BOUND = Fraction(1, 10**14)
 
 
-class HPFalsifier(BaseCausalTask):
-    """
-    High-Probability Falsifier.
+@dataclass(frozen=True)
+class CheckResult:
+    accepted: bool
+    false_acceptance_bound: Fraction | None = None
+    degree: int | None = None
+    entropy_bits: int | None = None
+    repetitions: int = 0
 
-    Given a DAG or an ADMG, a query (treatment-outcome), and a candidate formula,
-    verifies whether the candidate formula identifies the target interventional distribution.
+    def __bool__(self) -> bool:
+        return self.accepted
 
-    The formula should be an observational formula for p(outcomes | do(treatments)).
-    """
+    def __str__(self) -> str:
+        if not self.accepted:
+            return "False"
 
+        # formula=None case.
+        if self.degree is None:
+            return "True"
+
+        return (
+            "True\n"
+            "False-acceptance bound: "
+            f"{float(self.false_acceptance_bound):.3e}"
+        )
+
+    def __repr__(self) -> str:
+        return str(self)
+
+
+@dataclass(frozen=True)
+class _LinearGaussianSCM:
+    variables: tuple[str, ...]
+    coefficients: fmpq_mat  # (child, parent)
+    intercepts: fmpq_mat  # (n, 1)
+    noise_covariance: fmpq_mat  # diagonal (n, n)
+
+
+class HPFalsifier:
     def __init__(
         self,
-        treatments: Tuple[str | int, ...] | List[str | int] | str | int,
-        outcomes: Tuple[str | int, ...] | List[str | int] | str | int,
-        graph: Graph,
+        graph: str,
+        treatments: str | Sequence[str],
+        outcomes: str | Sequence[str],
     ) -> None:
-        """
-        Initialize the HPV falsifier.
+        self.graph = parse_graph(graph)
 
-        Parameters
-        ----------
-        treatments : list, tuple, str or int
-            Tuple or list of treatments. It could also be a single treatment.
-            Each element must correspond to a node in the graph.
-        outcomes : list, tuple, str or int
-            Tuple or list of outcomes. It could also be a single outcome.
-            Each element must correspond to a node in the graph.
-        graph : Graph
-            The DAG or ADMG.
-        """
-        super().__init__(treatments, outcomes, graph)
-        self._treatment_names = tuple(str(t) for t in self.treatments)
-
-    # ==============
-    # Floating point
-    # ==============
-
-    def _sample_SCM(
-        self,
-        seed: int = 42,
-        use_GNMM: bool = False,
-        marg: Graph | None = None,
-    ) -> Tuple[pd.DataFrame, pd.Series, pd.Series | pd.DataFrame]:
-        """
-        Given the DAG, sample the weighted adjacency matrix, offsets,
-        and variances that define the linear Gaussian SCM.
-
-        Parameters
-        ----------
-        seed : int, optional
-            Seed for the random number generator, by default 42.
-        use_GNMM : bool, optional
-            Whether to build a linear Gaussian SCM with correlated errors.
-            In this case, returns the parameter matrix, offsets, and
-            error covariance matrix.
-        marg: Graph | None, optional
-            Maximal arid graph used if use_GNMM is True.
-
-        Returns
-        -------
-        if not use_GNMM:
-            weighted_adj_matrix : pd.DataFrame
-                Weighted adjacency matrix specifying the weights in the linear Gaussian SCM.
-            offsets : pd.Series
-                Offsets for each variable in the linear Gaussian SCM.
-            variances : pd.Series
-                Noise variances in the linear Gaussian SCM.
-        else:
-            B: pd.DataFrame
-                Parameter matrix with non-zero values where directed edges are present.
-            offsets : pd.Series
-                Offsets for each variable in the linear Gaussian SCM.
-            Omega: pd.DataFrame
-                Covariance matrix of the error term.
-        """
-        if not use_GNMM:
-            weighted_adj_mat_dist = Normal(seed=seed)
-            offsets_dist = Normal(seed=seed)
-            variances_dist = Gamma(seed=seed)
-
-            weighted_adj_mat = pd.DataFrame(
-                0.0, index=self.graph.nodes, columns=self.graph.nodes
-            )
-            for parent in self.graph.nodes:
-                for child in self.graph.nodes:
-                    if self.graph.adjmat.loc[parent, child] != 0:
-                        weighted_adj_mat.loc[parent, child] = (
-                            weighted_adj_mat_dist.sample()
-                        )
-
-            offsets = pd.Series(
-                {node: offsets_dist.sample() for node in self.graph.nodes},
-                index=self.graph.nodes,
-            )
-
-            variances = pd.Series(
-                {node: variances_dist.sample() for node in self.graph.nodes},
-                index=self.graph.nodes,
-            )
-
-            return weighted_adj_mat, offsets, variances
-
-        np.random.seed(seed)
-        nodes = marg.observed_nodes
-
-        B = pd.DataFrame(0.0, index=nodes, columns=nodes)
-        for parent in nodes:
-            for child in nodes:
-                if marg.directed.loc[parent, child] != 0:
-                    B.loc[parent, child] = np.random.normal(0, 1)
-
-        offsets = pd.Series(
-            np.random.normal(0, 1, size=len(nodes)), index=nodes
+        self.treatments = _validate_variables(
+            treatments,
+            name="Treatments",
+            graph=self.graph,
+        )
+        self.outcomes = _validate_variables(
+            outcomes,
+            name="Outcomes",
+            graph=self.graph,
         )
 
-        Omega = pd.DataFrame(0.0, index=nodes, columns=nodes)
-        if marg.is_admg:
-            for i, u in enumerate(nodes):
-                for v in nodes[i + 1 :]:
-                    if marg.bidirected.loc[u, v] != 0:
-                        value = np.random.normal(0, 1)
-                        Omega.loc[u, v] = value
-                        Omega.loc[v, u] = value
-
-        # diagonally dominant to ensure it is positive semi-definite
-        for v in nodes:
-            Omega.loc[v, v] = np.sum(
-                np.abs(Omega.loc[v, :])
-            ) + np.random.gamma(2, 2)
-
-        return B, offsets, Omega
-
-    def _build_joint(
-        self,
-        weighted_adj_mat: pd.DataFrame,
-        offsets: pd.Series,
-        variances: pd.Series,
-        int_values: List[float] | Tuple[float, ...] | None = None,
-    ) -> CanonicalForm | Tuple[CanonicalForm, CanonicalForm]:
-        """
-        Build the joint distribution over all variables in the linear Gaussian SCM.
-        If int_value is not None, computes the true interventional distribution
-        p(self.outcomes | do(self.treatments=int_values)).
-
-        Parameters
-        ----------
-        weighted_adj_mat : pd.DataFrame
-            Weighted adjacency matrix specifying the weights in the linear Gaussian SCM.
-        offsets : pd.Series
-            Offsets for each variable in the linear Gaussian SCM.
-        variances : pd.Series
-            Noise variances in the linear Gaussian SCM.
-        int_values : list or tuple, optional
-            Values assigned to the treatments.
-
-        Returns
-        -------
-        CanonicalForm | Tuple[CanonicalForm, CanonicalForm]
-            joint distribution in canonical form.
-            If int_values is not None, also the true interventional distribution
-        """
-        factors = {}
-        nodes = weighted_adj_mat.index.to_list()
-        for child in nodes:
-            parent_mask = weighted_adj_mat[child] != 0
-            parents = weighted_adj_mat.index[parent_mask]
-
-            if len(parents) == 0:
-                cf = marginal(
-                    name=child,
-                    mean=offsets[child],
-                    variance=variances[child],
-                )
-            else:
-                cf = conditional(
-                    name=child,
-                    parents=parents,
-                    w=tuple(weighted_adj_mat.loc[parents, child]),
-                    b=offsets[child],
-                    variance=variances[child],
-                )
-
-            factors[child] = cf
-
-        joint = None
-        for child in nodes:
-            if joint is None:
-                joint = factors[child]
-            else:
-                joint *= factors[child]
-
-        if int_values is not None:
-            # remove incoming edges on the treatment
-            factors_do = factors.copy()
-            for treatment in self.treatments:
-                factors_do[treatment] = marginal(
-                    name=treatment,
-                    mean=offsets[treatment],
-                    variance=variances[treatment],
-                )
-
-            joint_do = None
-            for child in nodes:
-                if joint_do is None:
-                    joint_do = factors_do[child]
-                else:
-                    joint_do *= factors_do[child]
-
-            query = self.treatments + self.outcomes
-            nuisance = tuple([node for node in nodes if node not in query])
-            p_out_treat_do = joint_do.marginalization(nuisance)
-
-            p_treat_do = p_out_treat_do.marginalization(tuple(self.outcomes))
-            p_out_do_treat = p_out_treat_do / p_treat_do
-            evidence = {
-                treatment: int_values[idx]
-                for idx, treatment in enumerate(self.treatments)
-            }
-            p_out_do_treat = p_out_do_treat.reduction(evidence)
-
-            # or just:
-            # p_out_do_treat = p_out_treat_do.reduction(evidence)
-
-            return joint, p_out_do_treat
-
-        return joint
-
-    @staticmethod
-    def _gaussian_to_canonical(
-        mu: pd.Series,
-        Sigma: pd.DataFrame,
-    ) -> CanonicalForm:
-        """
-        Convert a Gaussian distribution into its canonical form.
-
-        Parameters
-        ----------
-        mu: pd.Series
-            Mean of the Gaussian distribution.
-        Sigma: pd.DataFrame
-            Covariance matrix of the Gaussian distribution.
-
-        Returns
-        -------
-        CanonicalForm
-            Gaussian distribution in canonical form.
-        """
-        nodes = Sigma.index.to_list()
-        n = len(nodes)
-
-        Sigma_np = Sigma.to_numpy(dtype=float)
-        mu_np = mu.to_numpy(dtype=float)
-
-        I = np.eye(n)
-
-        J_np = solve_spd(Sigma_np, I)
-        J = pd.DataFrame(J_np, index=nodes, columns=nodes)
-
-        h_np = solve_spd(Sigma_np, mu_np)
-        h = pd.Series(h_np, index=nodes)
-
-        logdet = logdet_spd(Sigma_np)
-        g = -0.5 * (mu_np.T @ h_np + n * np.log(2 * np.pi) + logdet)
-
-        return CanonicalForm(J, h, float(g))
-
-    def _build_joint_GNMM(
-        self,
-        B: pd.DataFrame,
-        offsets: pd.Series,
-        Omega: pd.DataFrame,
-        int_values: List[float] | Tuple[float, ...] | None = None,
-    ) -> CanonicalForm | Tuple[CanonicalForm, CanonicalForm]:
-        """
-        Build the joint distribution over all variables in the linear Gaussian SCM.
-        This function does not use the canonical DAG, but a multivariate Gaussian
-        over the observed variables with correlated errors where bidirected
-        edges are present.
-        If int_value is not None, computes the true interventional distribution
-        p(self.outcomes | do(self.treatments=int_values)).
-
-        Parameters
-        ----------
-        B : pd.DataFrame
-            Parameter matrix with non-zero values where directed edges are present.
-        offsets : pd.Series
-            Offsets for each variable in the linear Gaussian SCM.
-        Omega : pd.DataFrame
-            Covariance matrix of the error term.
-        int_values : list or tuple, optional
-            Values assigned to the treatments
-
-        Returns
-        -------
-        CanonicalForm | Tuple[CanonicalForm, CanonicalForm]
-            joint distribution in canonical form.
-            If int_values is not None, also the true interventional distribution
-        """
-        nodes = B.index.to_list()
-        n = len(nodes)
-        I = np.eye(n)
-
-        B_np, offsets_np, Omega_np = (
-            B.to_numpy(),
-            offsets.to_numpy(),
-            Omega.to_numpy(),
-        )
-
-        A = I - B_np.T
-        mu = np.linalg.solve(A, offsets_np)
-        tmp = np.linalg.solve(A, Omega_np)
-        Sigma = np.linalg.solve(A, tmp.T).T
-        # avoiding potential floating-point asymmetries
-        Sigma = 0.5 * (Sigma + Sigma.T)
-
-        joint_cf = self._gaussian_to_canonical(
-            pd.Series(mu, index=nodes),
-            pd.DataFrame(Sigma, index=nodes, columns=nodes),
-        )
-
-        if int_values is not None:
-            B_do = B.copy()
-            Omega_do = Omega.copy()
-
-            for treatment in self.treatments:
-                B_do.loc[:, treatment] = 0.0
-
-                Omega_do.loc[treatment, :] = 0.0
-                Omega_do.loc[:, treatment] = 0.0
-                # Keep original variance to maintain positive definiteness for J matrix
-                Omega_do.loc[treatment, treatment] = Omega.loc[
-                    treatment, treatment
-                ]
-
-            B_do_np, Omega_do_np = B_do.to_numpy(), Omega_do.to_numpy()
-
-            A_do = I - B_do_np.T
-            mu_do = np.linalg.solve(A_do, offsets_np)
-            tmp_do = np.linalg.solve(A_do, Omega_do_np)
-            Sigma_do = np.linalg.solve(A_do, tmp_do.T).T
-            Sigma_do = 0.5 * (Sigma_do + Sigma_do.T)
-
-            joint_do_cf = self._gaussian_to_canonical(
-                pd.Series(mu_do, index=nodes),
-                pd.DataFrame(Sigma_do, index=nodes, columns=nodes),
-            )
-
-            query = self.treatments + self.outcomes
-            nuisance = tuple([node for node in nodes if node not in query])
-            p_out_treat_do = joint_do_cf.marginalization(nuisance)
-
-            evidence = {
-                treatment: int_values[idx]
-                for idx, treatment in enumerate(self.treatments)
-            }
-            p_out_do_treat = p_out_treat_do.reduction(evidence)
-
-            return joint_cf, p_out_do_treat
-
-        return joint_cf
-
-    # ================
-    # Exact arithmetic
-    # ================
-
-    def _sample_SCM_exact(
-        self,
-        seed: int = 42,
-        M: int = 2**63 - 1,
-    ) -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
-        """
-        Sample an integer-valued linear Gaussian SCM for exact testing.
-
-        Weights and offsets are sampled from {-M, ..., M}; edge weights are
-        resampled until nonzero. Variances are sampled from {1, ..., M}.
-        """
-        if M < 1:
-            raise ValueError("M must be at least 1.")
-
-        rng = random.Random(seed)
-        nodes = list(self.graph.nodes)
-
-        weighted_adj_mat = pd.DataFrame(
-            [[fmpq(0) for _ in nodes] for _ in nodes],
-            index=nodes,
-            columns=nodes,
-            dtype=object,
-        )
-
-        for parent in nodes:
-            for child in nodes:
-                if self.graph.adjmat.loc[parent, child] != 0:
-                    value = 0
-                    while value == 0:
-                        value = rng.randrange(-M, M + 1)
-                    weighted_adj_mat.loc[parent, child] = fmpq(value)
-
-        offsets = pd.Series(
-            [fmpq(rng.randrange(-M, M + 1)) for _ in nodes],
-            index=nodes,
-            dtype=object,
-        )
-
-        variances = pd.Series(
-            [fmpq(rng.randrange(1, 2 * M + 1)) for _ in nodes],
-            index=nodes,
-            dtype=object,
-        )
-
-        return weighted_adj_mat, offsets, variances
-
-    def _build_joint_exact(
-        self,
-        weighted_adj_mat: pd.DataFrame,
-        offsets: pd.Series,
-        variances: pd.Series,
-        int_values: List[Any] | Tuple[Any, ...] | None = None,
-    ) -> ExactCanonicalForm | Tuple[ExactCanonicalForm, ExactCanonicalForm]:
-        """
-        Exact rational version of `_build_joint`.
-        """
-        factors = {}
-        nodes = weighted_adj_mat.index.to_list()
-
-        for child in nodes:
-            parent_mask = weighted_adj_mat[child] != fmpq(0)
-            parents = list(weighted_adj_mat.index[parent_mask])
-
-            if len(parents) == 0:
-                cf = exact_marginal(
-                    name=child,
-                    mean=offsets.loc[child],
-                    variance=variances.loc[child],
-                )
-            else:
-                weights = tuple(weighted_adj_mat.loc[parents, child].tolist())
-
-                cf = exact_conditional(
-                    name=child,
-                    parents=tuple(parents),
-                    w=weights,
-                    b=offsets.loc[child],
-                    variance=variances.loc[child],
-                )
-
-            factors[child] = cf
-
-        joint = None
-        for child in nodes:
-            joint = factors[child] if joint is None else joint * factors[child]
-
-        if int_values is not None:
-            factors_do = factors.copy()
-
-            for treatment in self.treatments:
-                factors_do[treatment] = exact_marginal(
-                    name=treatment,
-                    mean=offsets.loc[treatment],
-                    variance=variances.loc[treatment],
-                )
-
-            joint_do = None
-            for child in nodes:
-                joint_do = (
-                    factors_do[child]
-                    if joint_do is None
-                    else joint_do * factors_do[child]
-                )
-
-            query = self.treatments + self.outcomes
-            nuisance = tuple(node for node in nodes if node not in query)
-            p_out_treat_do = joint_do.marginalization(nuisance)
-
-            p_treat_do = p_out_treat_do.marginalization(tuple(self.outcomes))
-            p_out_do_treat = p_out_treat_do / p_treat_do
-
-            evidence = {
-                treatment: to_fmpq(int_values[idx])
-                for idx, treatment in enumerate(self.treatments)
-            }
-            p_out_do_treat = p_out_do_treat.reduction(evidence)
-
-            return joint, p_out_do_treat
-
-        return joint
-
-    @staticmethod
-    def _series_equal_exact(a: pd.Series, b: pd.Series) -> bool:
-        """Entrywise exact equality for rational Series."""
-        if list(a.index) != list(b.index):
-            return False
-        return all(to_fmpq(a.loc[i]) == to_fmpq(b.loc[i]) for i in a.index)
-
-    @staticmethod
-    def _df_equal_exact(a: pd.DataFrame, b: pd.DataFrame) -> bool:
-        """Entrywise exact equality for rational DataFrames."""
-        if list(a.index) != list(b.index):
-            return False
-        if list(a.columns) != list(b.columns):
-            return False
-        return all(
-            to_fmpq(a.loc[i, j]) == to_fmpq(b.loc[i, j])
-            for i in a.index
-            for j in a.columns
-        )
-
-    # ===========================================
-    # Identifiability and formula parsing helpers
-    # ===========================================
-
-    def _is_identifiable(self):
-        """
-        Determine whether the interventional distribution is identifiable or not.
-
-        Returns
-        -------
-        bool
-            True if the interventional distribution is identifiable, False otherwise.
-        """
-        di_edges = [
-            (src, dst)
-            for src in self.graph.directed.index
-            for dst in self.graph.directed.columns
-            if self.graph.directed.loc[src, dst] != 0
-        ]
-        bi_edges = []
-        if self.graph.is_admg:
-            for i, src in enumerate(self.graph.bidirected.index):
-                for dst in self.graph.bidirected.columns[i + 1 :]:
-                    if self.graph.bidirected.loc[src, dst] != 0:
-                        bi_edges.append((src, dst))
-
-        g = graphs.ADMG(
-            self.graph.observed_nodes, di_edges=di_edges, bi_edges=bi_edges
-        )
-        id_obj = identification.OneLineID(
-            g, treatments=self.treatments, outcomes=self.outcomes
-        )
-        return id_obj.id()
-
-    @staticmethod
-    def _split_distribution_items(text: str) -> list[str]:
-        return [item.strip() for item in text.split(",") if item.strip()]
-
-    def _iter_distribution_bodies(self, formula: str):
-        i = 0
-        while i < len(formula):
-            if (
-                formula[i] != "p"
-                or i + 1 >= len(formula)
-                or formula[i + 1] != "("
-            ):
-                i += 1
-                continue
-
-            start = i + 2
-            depth = 1
-            j = start
-            while j < len(formula) and depth:
-                if formula[j] == "(":
-                    depth += 1
-                elif formula[j] == ")":
-                    depth -= 1
-                j += 1
-
-            if depth:
-                raise ValueError(
-                    "Unbalanced parentheses in distribution term."
-                )
-
-            yield formula[start : j - 1]
-            i = j
-
-    def _validate_placeholders(self, formula: str) -> None:
-        seen = set()
-
-        for body in self._iter_distribution_bodies(formula):
-            if "|" in body:
-                target_text, cond_text = body.split("|", 1)
-            else:
-                target_text, cond_text = body, ""
-
-            for item in self._split_distribution_items(target_text):
-                if _PLACEHOLDER_ITEM.match(item):
-                    raise ValueError(
-                        "The placeholder `=.` is only allowed in conditioning "
-                        "variables, e.g. `p(Z | X=.)`."
-                    )
-
-            for item in self._split_distribution_items(cond_text):
-                match = _PLACEHOLDER_ITEM.match(item)
-                if not match:
-                    continue
-                name = normalize_var_name(match.group(1))
-                if name not in self._treatment_names:
-                    raise ValueError(
-                        "The placeholder `=.` is only allowed for treatment "
-                        f"variables {self._treatment_names}; got `{name}=.`."
-                    )
-                seen.add(name)
-
-        if "=." in formula and not seen:
+        overlap = sorted(set(self.treatments) & set(self.outcomes))
+        if overlap:
             raise ValueError(
-                "The placeholder `=.` must appear as a full conditioning item, "
-                "e.g. `p(Z | X=.)`."
+                "Treatments and outcomes must be disjoint. "
+                f"Overlapping variables: {', '.join(overlap)}."
             )
-
-    @staticmethod
-    def _format_value(value: float | fmpq) -> str:
-        return str(value)
-
-    def _fill_placeholders(
-        self,
-        formula: str,
-        int_values: List[float | fmpq],
-    ) -> str:
-        values = {
-            treatment: self._format_value(int_values[idx])
-            for idx, treatment in enumerate(self._treatment_names)
-        }
-
-        def replace(match):
-            raw_name = match.group(1)
-            name = normalize_var_name(raw_name)
-            if name not in values:
-                raise ValueError(
-                    f"No sampled intervention value available for `{raw_name}=.`."
-                )
-            return f"{raw_name}={values[name]}"
-
-        return _PLACEHOLDER.sub(replace, formula)
-
-    @staticmethod
-    def _parse_formula(
-        formula: Formula | str,
-        *,
-        exact: bool = False,
-    ) -> Formula:
-        if not isinstance(formula, str):
-            return formula
-
-        parser = Lark.open(
-            os.path.join(SCRIPT_DIR, "../formula/grammar.lark"),
-            parser="lalr",
-            transformer=TreeToFormula(exact=exact),
-        )
-        return parser.parse(formula)
-
-    def _parse_for_assignment(
-        self,
-        formula: Formula | str,
-        int_values: List[float | fmpq],
-        *,
-        exact: bool,
-    ) -> Formula:
-        if not isinstance(formula, str):
-            return formula
-        return self._parse_formula(
-            self._fill_placeholders(formula, int_values),
-            exact=exact,
-        )
-
-    def _get_intervention_assignments(
-        self,
-        *,
-        exact: bool,
-    ) -> List[List[float | fmpq]]:
-        """Return the origin and coordinate basis intervention assignments."""
-        n_treatments = len(self.treatments)
-
-        if exact:
-            zero = fmpq(0)
-            one = fmpq(1)
-        else:
-            zero = 0.0
-            one = 1.0
-
-        assignments = [[zero for _ in range(n_treatments)]]
-
-        for i in range(n_treatments):
-            assignment = [zero for _ in range(n_treatments)]
-            assignment[i] = one
-            assignments.append(assignment)
-
-        return assignments
-
-    def _reduce_surviving_treatments(
-        self,
-        candidate_target,
-        int_values: List[float | fmpq],
-    ):
-        """
-        Fix treatment variables that survive candidate-formula evaluation.
-
-        Before reduction, a candidate distribution may only contain outcomes and
-        treatment variables. Treatment variables are internally set to the sampled
-        intervention values. After reduction, only outcomes may remain.
-        """
-        candidate_scope = set(candidate_target.scope())
-        allowed_scope = set(self.outcomes) | set(self.treatments)
-        extra_scope = candidate_scope - allowed_scope
-
-        if extra_scope:
-            raise ValueError(
-                "The formula for the interventional distribution must yield "
-                f"a distribution over outcomes {self.outcomes}, optionally with "
-                f"surviving treatments {self.treatments}, but yielded extra scope "
-                f"{sorted(extra_scope)}."
-            )
-
-        evidence = {
-            treatment: int_values[idx]
-            for idx, treatment in enumerate(self.treatments)
-            if treatment in candidate_scope
-        }
-
-        if evidence:
-            candidate_target = candidate_target.reduction(evidence)
-
-        self._validate_candidate_scope(candidate_target)
-        return candidate_target
-
-    def _validate_candidate_scope(self, candidate_target) -> None:
-        """Checks that the final candidate scope is the same as the outcome."""
-        candidate_scope = set(candidate_target.scope())
-        outcome_scope = set(self.outcomes)
-
-        if candidate_scope != outcome_scope:
-            raise ValueError(
-                "The formula for the interventional distribution must yield "
-                f"a distribution over outcomes {self.outcomes}, but yielded scope "
-                f"{candidate_target.scope()}."
-            )
-
-    # ==============================
-    # API
-    # ==============================
 
     def check(
         self,
-        formula: Formula | str | None,
-        nsim: int = 1,
-        tol: float = 1e-6,
-        disable_progress_bar: bool = True,
-        use_GNMM: bool = False,
-        backend: str = "auto",
-        M: int = 2**63 - 1,
-    ) -> Tuple[bool, float]:
-        """
-        Check if the candidate formula identifies the target
-        interventional distribution, depending on mode.
-
-        Parameters
-        ----------
-        formula : Formula | str | None
-            The candidate formula.
-        nsim : int, optional
-            Number of sampled linear Gaussian SCMs.
-        tol : float, optional
-            The tolerance parameter for the difference between the target
-            and the distribution obtained using the candidate formula.
-            Ignored by backend="exact".
-        disable_progress_bar : bool, default False
-            Whether to disable the progress bar during iteration.
-        use_GNMM : bool, default False
-            Whether to use a linear Gaussian SCM corresponding to the maximal arid
-            projection of the ADMG. If the graph is a DAG, nothing changes.
-            The linear SCM corresponding to the MArG is exactly the Gaussian
-            nested Markov model.
-            Only used when `mode`=='distribution'.
-            For more details, see:
-            I. Shpitser, R. Evans, T. Richardson (2018). Acyclic Linear SEMs
-                Obey the Nested Markov Property.
-        backend : {'float', 'exact', 'auto'}, default='auto'
-            Computation backend.
-        M : int, default=2**63-1
-            Exact mode samples edge coefficients from {-M, ..., M}\{0},
-            and conditional variances from {1, ..., 2M}.
-
-        Returns
-        -------
-        bool
-            True if the formula identifies the target, False otherwise.
-        float
-            Fraction of times the candidate formula yielded the true target.
-        """
-        if backend not in {"float", "exact", "auto"}:
-            raise ValueError(
-                "backend must be either 'float', 'exact', or 'auto'."
-            )
-
-        if backend == "auto":
-            backend = "exact" if not use_GNMM else "float"
-
-        if backend == "exact" and use_GNMM:
-            raise NotImplementedError(
-                "backend='exact' currently supports use_GNMM=False only."
-            )
+        formula: str | None,
+        target_bound: Fraction | float = _DEFAULT_TARGET_BOUND,
+    ) -> CheckResult:
+        target = _validate_target_bound(target_bound)
 
         if formula is None:
-            if (
-                not self.graph.is_admg
-            ):  # in a DAG, all effects are identifiable
-                return False, 0.0
-
-            if (
-                not self._is_identifiable()
-            ):  # candidate formula is None and effect is not identifiable
-                return True, 1.0
-
-            return (
-                False,
-                0.0,
-            )  # candidate formula is None and effect is identifiable
-
-        if (
-            not self._is_identifiable()
-        ):  # candidate formula is not None and effect is not identifiable
-            return False, 0.0
-
-        if isinstance(formula, str):
-            self._validate_placeholders(formula)
-
-        if backend == "exact":
-            return self._check_exact(
-                formula=formula,
-                nsim=nsim,
-                disable_progress_bar=disable_progress_bar,
-                M=M,
+            return CheckResult(
+                accepted=not self._is_identifiable(),
             )
 
-        return self._check_float(
-            formula=formula,
-            nsim=nsim,
-            tol=tol,
-            disable_progress_bar=disable_progress_bar,
-            use_GNMM=use_GNMM,
-            M=M,
+        if not isinstance(formula, str):
+            raise TypeError("formula must be a string or None.")
+
+        if not self._is_identifiable():
+            return CheckResult(accepted=False)
+
+        validated = parse_and_validate(formula)
+        self._validate_formula_variables(validated)
+        self._validate_formula_signature(validated)
+
+        number_of_variables = len(self.graph.nodes)
+        degree_bound = DegreeBoundEvaluator(
+            number_of_variables=number_of_variables,
+        ).evaluate(validated)
+        equality_degree = _equality_test_degree(
+            degree_bound,
+            number_of_variables,
+        )
+        entropy_bits = _DEFAULT_ENTROPY_BITS
+        one_run_bound = _zippel_ratio(
+            equality_degree,
+            entropy_bits,
         )
 
-    def _check_float(
-        self,
-        formula: Formula | str,
-        nsim: int,
-        tol: float,
-        disable_progress_bar: bool,
-        use_GNMM: bool,
-        M: int,
-    ) -> Tuple[bool, float]:
-        """Floating-point checking loop."""
-        if use_GNMM and self.graph.is_admg:
-            marg = self.graph.maximal_arid_projection()
+        if one_run_bound <= target:
+            repetitions = 1
+            false_acceptance_bound = one_run_bound
+        elif one_run_bound < 1:
+            repetitions, false_acceptance_bound = _repeat_until_target(
+                one_run_bound,
+                target,
+            )
         else:
-            marg = self.graph
+            entropy_bits = _minimum_bits_below_one(
+                degree=equality_degree,
+                minimum_bits=_DEFAULT_ENTROPY_BITS + 1,
+            )
+            one_run_bound = _zippel_ratio(
+                equality_degree,
+                entropy_bits,
+            )
 
-        num_correct = 0
-        for i in tqdm(range(nsim), disable=disable_progress_bar):
-
-            if not use_GNMM:
-                weighted_adj_mat, offsets, variances = self._sample_SCM(seed=i)
-                joint = self._build_joint(weighted_adj_mat, offsets, variances)
+            if one_run_bound <= target:
+                repetitions = 1
+                false_acceptance_bound = one_run_bound
             else:
-                B, offsets, Omega = self._sample_SCM(
-                    seed=i, use_GNMM=True, marg=marg
-                )
-                joint = self._build_joint_GNMM(B, offsets, Omega)
-
-            assignments = self._get_intervention_assignments(exact=False)
-            assignment_matches = 0
-
-            for int_values in assignments:
-                parsed_formula = self._parse_for_assignment(
-                    formula,
-                    int_values,
-                    exact=False,
-                )
-                visitor = CanonicalFormVisitor(joint)
-                candidate_int_dist = parsed_formula.accept(visitor)
-
-                if not isinstance(candidate_int_dist, CanonicalForm):
-                    raise ValueError(
-                        "The formula for the interventional distribution "
-                        "did not yield a distribution."
-                    )
-
-                candidate_int_dist = self._reduce_surviving_treatments(
-                    candidate_int_dist,
-                    int_values,
+                repetitions, false_acceptance_bound = _repeat_until_target(
+                    one_run_bound,
+                    target,
                 )
 
-                if not use_GNMM:
-                    _, true_int_dist = self._build_joint(
-                        weighted_adj_mat,
-                        offsets,
-                        variances,
-                        int_values,
-                    )
-                else:
-                    _, true_int_dist = self._build_joint_GNMM(
-                        B,
-                        offsets,
-                        Omega,
-                        int_values,
-                    )
+        target_outputs = tuple(Variable(name) for name in self.outcomes)
+        target_inputs = tuple(Variable(name) for name in self.treatments)
 
-                true_int_mean = true_int_dist.mean()[self.outcomes]
-                true_int_cov = true_int_dist.covariance().loc[
-                    self.outcomes, self.outcomes
-                ]
+        for repetition in range(1, repetitions + 1):
+            scm = self._sample_scm(entropy_bits)
+            joint = self._build_joint(scm)
 
-                candidate_int_mean = candidate_int_dist.mean()[self.outcomes]
-                candidate_int_cov = candidate_int_dist.covariance().loc[
-                    self.outcomes, self.outcomes
-                ]
+            candidate = GaussianEvaluator(joint).evaluate(validated)
+            target_kernel = self._build_interventional_kernel(scm)
 
-                means_match = np.allclose(
-                    true_int_mean.to_numpy(dtype=float),
-                    candidate_int_mean.to_numpy(dtype=float),
-                    atol=tol,
-                    rtol=0,
-                )
-                covariances_match = np.allclose(
-                    true_int_cov.to_numpy(dtype=float),
-                    candidate_int_cov.to_numpy(dtype=float),
-                    atol=tol,
-                    rtol=0,
+            # The formula may have additional free inputs, as in the
+            # Napkin formula. We discard such inputs only if the
+            # evaluated kernel is invariant with respect to them.
+            extra_input_indices = tuple(
+                index
+                for index, variable in enumerate(candidate.inputs)
+                if variable not in target_inputs
+            )
+
+            if any(
+                candidate.mean_linear[row, column] != 0
+                for row in range(candidate.mean_linear.nrows())
+                for column in extra_input_indices
+            ):
+                return CheckResult(
+                    accepted=False,
+                    degree=equality_degree,
+                    entropy_bits=entropy_bits,
+                    repetitions=repetition,
                 )
 
-                if means_match and covariances_match:
-                    assignment_matches += 1
+            candidate = _align_kernel(
+                candidate,
+                outputs=target_outputs,
+                inputs=target_inputs,
+            )
 
-            if assignment_matches == len(assignments):
-                num_correct += 1
+            if not _kernels_equal(candidate, target_kernel):
+                return CheckResult(
+                    accepted=False,
+                    degree=equality_degree,
+                    entropy_bits=entropy_bits,
+                    repetitions=repetition,
+                )
 
-        correct = num_correct == nsim
-        return correct, num_correct / nsim
+        return CheckResult(
+            accepted=True,
+            false_acceptance_bound=false_acceptance_bound,
+            degree=equality_degree,
+            entropy_bits=entropy_bits,
+            repetitions=repetitions,
+        )
 
-    def _check_exact(
+    def _validate_formula_variables(
         self,
-        formula: Formula | str,
-        nsim: int,
-        disable_progress_bar: bool,
-        M: int,
-    ) -> Tuple[bool, float]:
-        """Exact rational checking loop for interventional distributions."""
-        num_correct = 0
+        validated: ValidationResult,
+    ) -> None:
+        observed_variables = frozenset(
+            Variable(name)
+            for name, node in self.graph.nodes.items()
+            if node.observed
+        )
 
-        for i in tqdm(range(nsim), disable=disable_progress_bar):
-            weighted_adj_mat, offsets, variances = self._sample_SCM_exact(
-                seed=i,
-                M=M,
+        invalid_variables = frozenset(
+            variable
+            for variable in validated.used_variables
+            if variable.original not in observed_variables
+        )
+
+        if invalid_variables:
+            raise ValueError(
+                "The formula must use only observed variables from the graph. "
+                f"Invalid variables: {format_variables(invalid_variables)}."
             )
 
-            joint = self._build_joint_exact(
-                weighted_adj_mat,
-                offsets,
-                variances,
+    def _validate_formula_signature(
+        self,
+        validated: ValidationResult,
+    ) -> None:
+        expected_outputs = frozenset(Variable(name) for name in self.outcomes)
+
+        if validated.signature.outputs != expected_outputs:
+            raise ValueError(
+                "The formula must yield exactly the outputs "
+                f"{format_variables(expected_outputs)}, but yielded "
+                f"{format_variables(validated.signature.outputs)}."
             )
 
-            assignments = self._get_intervention_assignments(exact=True)
-            assignment_matches = 0
+    def _is_identifiable(self) -> bool:
+        if all(node.observed for node in self.graph.nodes.values()):
+            return True
 
-            for int_values in assignments:
-                parsed_formula = self._parse_for_assignment(
-                    formula,
-                    int_values,
-                    exact=True,
+        observed_nodes = [
+            name for name, node in self.graph.nodes.items() if node.observed
+        ]
+        directed_edges = [
+            (parent.name, child.name)
+            for parent in self.graph.nodes.values()
+            if parent.observed
+            for child in parent.children
+            if child.observed
+        ]
+        bidirected_edges = sorted(
+            {
+                tuple(sorted(child.name for child in latent.children))
+                for latent in self.graph.nodes.values()
+                if not latent.observed
+            }
+        )
+
+        graph = graphs.ADMG(
+            observed_nodes,
+            di_edges=directed_edges,
+            bi_edges=bidirected_edges,
+        )
+        return identification.OneLineID(
+            graph,
+            treatments=self.treatments,
+            outcomes=self.outcomes,
+        ).id()
+
+    def _sample_scm(self, entropy_bits: int) -> _LinearGaussianSCM:
+        if entropy_bits < 1:
+            raise ValueError("entropy_bits must be positive.")
+
+        variables = tuple(self.graph.nodes)
+        index = {
+            variable: position for position, variable in enumerate(variables)
+        }
+        n = len(variables)
+
+        coefficients = [fmpz(0) for _ in range(n * n)]
+        for child_name, child in self.graph.nodes.items():
+            child_index = index[child_name]
+            for parent in child.parents:
+                parent_index = index[parent.name]
+                coefficients[child_index * n + parent_index] = _sample_fmpz(
+                    entropy_bits, signed=True
                 )
-                visitor = CanonicalFormVisitor(joint)
-                candidate_int_dist = parsed_formula.accept(visitor)
 
-                if not isinstance(candidate_int_dist, ExactCanonicalForm):
-                    raise ValueError(
-                        "The formula for the interventional distribution "
-                        "did not yield an ExactCanonicalForm."
-                    )
+        intercepts = [
+            _sample_fmpz(entropy_bits, signed=True) for _ in variables
+        ]
+        variances = [_sample_fmpz(entropy_bits) for _ in variables]
 
-                candidate_int_dist = self._reduce_surviving_treatments(
-                    candidate_int_dist,
-                    int_values,
-                )
+        return _LinearGaussianSCM(
+            variables=variables,
+            coefficients=fmpq_mat(n, n, coefficients),
+            intercepts=fmpq_mat(n, 1, intercepts),
+            noise_covariance=fmpq_mat(
+                n,
+                n,
+                [
+                    variances[i] if i == j else fmpz(0)
+                    for i in range(n)
+                    for j in range(n)
+                ],
+            ),
+        )
 
-                _, true_int_dist = self._build_joint_exact(
-                    weighted_adj_mat,
-                    offsets,
-                    variances,
-                    int_values,
-                )
+    @staticmethod
+    def _build_joint(
+        scm: _LinearGaussianSCM,
+    ) -> GaussianDistribution:
+        mean, covariance = _solve_linear_gaussian(
+            scm.coefficients,
+            scm.intercepts,
+            scm.noise_covariance,
+        )
 
-                true_int_mean = true_int_dist.mean().loc[self.outcomes]
-                true_int_cov = true_int_dist.covariance().loc[
-                    self.outcomes, self.outcomes
-                ]
+        return GaussianDistribution(
+            variables=tuple(Variable(name) for name in scm.variables),
+            mean=mean,
+            covariance=covariance,
+        )
 
-                candidate_int_mean = candidate_int_dist.mean().loc[
-                    self.outcomes
-                ]
-                candidate_int_cov = candidate_int_dist.covariance().loc[
-                    self.outcomes, self.outcomes
-                ]
+    def _build_interventional_kernel(
+        self,
+        scm: _LinearGaussianSCM,
+    ) -> GaussianKernel:
+        index = {
+            variable: position
+            for position, variable in enumerate(scm.variables)
+        }
+        treatment_indices = tuple(index[name] for name in self.treatments)
+        treatment_set = set(treatment_indices)
+        non_treatment_indices = tuple(
+            i for i in range(len(scm.variables)) if i not in treatment_set
+        )
 
-                means_match = self._series_equal_exact(
-                    true_int_mean,
-                    candidate_int_mean,
-                )
-                covariances_match = self._df_equal_exact(
-                    true_int_cov,
-                    candidate_int_cov,
-                )
+        coefficients_non_treatment = submatrix(
+            scm.coefficients,
+            non_treatment_indices,
+            non_treatment_indices,
+        )
+        coefficients_treatment = submatrix(
+            scm.coefficients,
+            non_treatment_indices,
+            treatment_indices,
+        )
+        intercepts = submatrix(
+            scm.intercepts,
+            non_treatment_indices,
+            (0,),
+        )
+        noise_covariance = submatrix(
+            scm.noise_covariance,
+            non_treatment_indices,
+            non_treatment_indices,
+        )
 
-                if means_match and covariances_match:
-                    assignment_matches += 1
+        identity = _identity(len(non_treatment_indices))
+        system = identity - coefficients_non_treatment
+        inverse = system.solve(identity)
 
-            if assignment_matches == len(assignments):
-                num_correct += 1
+        mean_intercept = inverse * intercepts
+        mean_linear = inverse * coefficients_treatment
+        covariance = inverse * noise_covariance * inverse.transpose()
 
-        correct = num_correct == nsim
-        return correct, num_correct / nsim
+        non_treatment_position = {
+            original_index: position
+            for position, original_index in enumerate(non_treatment_indices)
+        }
+        output_indices = tuple(
+            non_treatment_position[index[name]] for name in self.outcomes
+        )
+
+        return GaussianKernel(
+            outputs=tuple(Variable(name) for name in self.outcomes),
+            inputs=tuple(Variable(name) for name in self.treatments),
+            mean_intercept=submatrix(
+                mean_intercept,
+                output_indices,
+                (0,),
+            ),
+            mean_linear=submatrix(
+                mean_linear,
+                output_indices,
+                range(len(self.treatments)),
+            ),
+            covariance=submatrix(
+                covariance,
+                output_indices,
+                output_indices,
+            ),
+        )
+
+
+def _validate_variables(
+    variables: str | Sequence[str],
+    name: str,
+    graph: Graph,
+) -> tuple[str, ...]:
+    if isinstance(variables, str):
+        variables = (variables,)
+    else:
+        variables = tuple(variables)
+
+    if not variables:
+        raise ValueError(f"{name} must not be empty.")
+
+    if any(not isinstance(variable, str) for variable in variables):
+        raise TypeError(f"{name} must contain only variable names as strings.")
+
+    duplicates = sorted(
+        {variable for variable in variables if variables.count(variable) > 1}
+    )
+    if duplicates:
+        raise ValueError(
+            f"{name} contains duplicate variables: "
+            f"{', '.join(duplicates)}."
+        )
+
+    unknown = sorted(
+        variable for variable in variables if variable not in graph.nodes
+    )
+    if unknown:
+        raise ValueError(
+            f"{name} contains variables not present in the graph: "
+            f"{', '.join(unknown)}."
+        )
+
+    unobserved = sorted(
+        variable
+        for variable in variables
+        if not graph.nodes[variable].observed
+    )
+    if unobserved:
+        raise ValueError(
+            f"{name} must contain only observed variables. "
+            f"Unobserved variables: {', '.join(unobserved)}."
+        )
+
+    return variables
+
+
+def _validate_target_bound(
+    target_bound: Fraction | float,
+) -> Fraction:
+    if isinstance(target_bound, Fraction):
+        bound = target_bound
+    elif isinstance(target_bound, float):
+        bound = Fraction(str(target_bound))
+    else:
+        raise TypeError("target_bound must be a Fraction or float.")
+
+    if not 0 < bound < 1:
+        raise ValueError("target_bound must lie strictly between 0 and 1.")
+
+    return bound
+
+
+def _equality_test_degree(
+    candidate: DegreeBound,
+    number_of_variables: int,
+) -> int:
+    target_mean_degree = number_of_variables
+    target_covariance_degree = 2 * number_of_variables - 1
+
+    return max(
+        candidate.mean_numerator,
+        candidate.mean_denominator + target_mean_degree,
+        candidate.covariance_numerator,
+        candidate.covariance_denominator + target_covariance_degree,
+    )
+
+
+def _zippel_ratio(
+    degree: int,
+    entropy_bits: int,
+) -> Fraction:
+    if degree < 0:
+        raise ValueError("degree must be non-negative.")
+    if entropy_bits < 1:
+        raise ValueError("entropy_bits must be positive.")
+
+    return Fraction(degree, 1 << entropy_bits)
+
+
+def _repeat_until_target(
+    one_run_bound: Fraction,
+    target_bound: Fraction,
+) -> tuple[int, Fraction]:
+    if not 0 <= one_run_bound < 1:
+        raise ValueError("one_run_bound must lie in [0, 1).")
+
+    repetitions = 1
+    repeated_bound = one_run_bound
+
+    while repeated_bound > target_bound:
+        repetitions += 1
+        repeated_bound *= one_run_bound
+
+    return repetitions, repeated_bound
+
+
+def _minimum_bits_below_one(
+    degree: int,
+    minimum_bits: int,
+) -> int:
+    if degree < 0:
+        raise ValueError("degree must be non-negative.")
+    if minimum_bits < 1:
+        raise ValueError("minimum_bits must be positive.")
+
+    return max(minimum_bits, degree.bit_length())
+
+
+def _sample_fmpz(
+    entropy_bits: int,
+    signed: bool = False,
+) -> fmpz:
+    if entropy_bits < 1:
+        raise ValueError("entropy_bits must be at least 1")
+
+    if not signed:
+        return fmpz(getrandbits(entropy_bits)) + 1
+
+    magnitude = fmpz(getrandbits(entropy_bits - 1)) + 1
+    sign = -1 if getrandbits(1) else 1
+    return sign * magnitude
+
+
+def _solve_linear_gaussian(
+    coefficients: fmpq_mat,
+    intercepts: fmpq_mat,
+    noise_covariance: fmpq_mat,
+) -> tuple[fmpq_mat, fmpq_mat]:
+    identity = _identity(coefficients.nrows())
+
+    system = identity - coefficients
+    inverse = system.solve(identity)
+
+    return (
+        inverse * intercepts,
+        inverse * noise_covariance * inverse.transpose(),
+    )
+
+
+def _identity(size: int) -> fmpq_mat:
+    return fmpq_mat(
+        size,
+        size,
+        [1 if i == j else 0 for i in range(size) for j in range(size)],
+    )
+
+
+def _align_kernel(
+    kernel: GaussianKernel,
+    outputs: tuple[Variable, ...],
+    inputs: tuple[Variable, ...],
+) -> GaussianKernel:
+    output_index = {variable: i for i, variable in enumerate(kernel.outputs)}
+    indices = tuple(output_index[variable] for variable in outputs)
+
+    return GaussianKernel(
+        outputs=outputs,
+        inputs=inputs,
+        mean_intercept=submatrix(
+            kernel.mean_intercept,
+            indices,
+            (0,),
+        ),
+        mean_linear=align_columns(
+            submatrix(
+                kernel.mean_linear,
+                indices,
+                range(len(kernel.inputs)),
+            ),
+            kernel.inputs,
+            inputs,
+        ),
+        covariance=submatrix(
+            kernel.covariance,
+            indices,
+            indices,
+        ),
+    )
+
+
+def _kernels_equal(
+    left: GaussianKernel,
+    right: GaussianKernel,
+) -> bool:
+    return (
+        left.outputs == right.outputs
+        and left.inputs == right.inputs
+        and _matrices_equal(left.mean_intercept, right.mean_intercept)
+        and _matrices_equal(left.mean_linear, right.mean_linear)
+        and _matrices_equal(left.covariance, right.covariance)
+    )
+
+
+def _matrices_equal(left: fmpq_mat, right: fmpq_mat) -> bool:
+    return (
+        left.nrows() == right.nrows()
+        and left.ncols() == right.ncols()
+        and all(
+            left[i, j] == right[i, j]
+            for i in range(left.nrows())
+            for j in range(left.ncols())
+        )
+    )

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
 
+from ..utils import format_variables
 from .formula import (
     BaseKernel,
     BaseQuotient,
@@ -20,14 +20,11 @@ from .parser import parse
 class ValidationResult:
     formula: Formula
     signature: KernelSignature
+    used_variables: frozenset[Variable]
 
 
 class ValidationError(ValueError):
     pass
-
-
-def _format_variables(variables: Iterable[Variable]) -> str:
-    return ", ".join(str(variable) for variable in sorted(variables, key=str))
 
 
 def _require_distinct(
@@ -65,6 +62,7 @@ def _validate_base_kernel(kernel: BaseKernel) -> ValidationResult:
             outputs=frozenset(kernel.outputs),
             inputs=frozenset(kernel.inputs),
         ),
+        used_variables=frozenset(kernel.outputs + kernel.inputs),
     )
 
 
@@ -97,7 +95,7 @@ def _validate_product(
 
         if overlap:
             raise ValidationError(
-                "Product factors repeat outputs: " + _format_variables(overlap)
+                "Product factors repeat outputs: " + format_variables(overlap)
             )
 
         all_outputs.update(factor.signature.outputs)
@@ -118,10 +116,12 @@ def _validate_product(
                 remaining.pop(index)
                 break
         else:
-            blocked = "; ".join((
-                f"({_format_variables(factor.signature.outputs)}) "
-                f"needs "
-                f"({_format_variables(factor.signature.inputs - available)})")
+            blocked = "; ".join(
+                (
+                    f"({format_variables(factor.signature.outputs)}) "
+                    f"needs "
+                    f"({format_variables(factor.signature.inputs - available)})"
+                )
                 for factor in remaining
             )
 
@@ -134,12 +134,17 @@ def _validate_product(
         factors=tuple(factor.formula for factor in ordered)
     )
 
+    used_variables = frozenset().union(
+        *(factor.used_variables for factor in factors)
+    )
+
     return ValidationResult(
         formula=normalised_product,
         signature=KernelSignature(
             outputs=frozenset(all_outputs),
             inputs=frozenset(external_inputs),
         ),
+        used_variables=used_variables,
     )
 
 
@@ -158,7 +163,7 @@ def _validate_marginalisation(
 
     if missing:
         raise ValidationError(
-            "Cannot marginalise non-outputs: " + _format_variables(missing)
+            "Cannot marginalise non-outputs: " + format_variables(missing)
         )
 
     normalised_marginalisation = Marginalisation(
@@ -172,6 +177,7 @@ def _validate_marginalisation(
             outputs=(body.signature.outputs - variables),
             inputs=body.signature.inputs,
         ),
+        used_variables=body.used_variables,
     )
 
 
@@ -197,7 +203,7 @@ def _validate_icd(
     if overlap:
         raise ValidationError(
             "ICD denominator outputs and inputs overlap: "
-            + _format_variables(overlap)
+            + format_variables(overlap)
         )
 
     missing_outputs = denominator_outputs - body.signature.outputs
@@ -205,7 +211,7 @@ def _validate_icd(
     if missing_outputs:
         raise ValidationError(
             "ICD denominator outputs must be body outputs; "
-            "not outputs: " + _format_variables(missing_outputs)
+            "not outputs: " + format_variables(missing_outputs)
         )
 
     omitted_body_inputs = body.signature.inputs - denominator_inputs
@@ -213,7 +219,7 @@ def _validate_icd(
     if omitted_body_inputs:
         raise ValidationError(
             "ICD denominator must retain every body input; "
-            "omitted: " + _format_variables(omitted_body_inputs)
+            "omitted: " + format_variables(omitted_body_inputs)
         )
 
     remaining_outputs = body.signature.outputs - denominator_outputs
@@ -226,7 +232,7 @@ def _validate_icd(
         raise ValidationError(
             "ICD denominator inputs must be body inputs "
             "or remaining body outputs; invalid: "
-            + _format_variables(invalid_inputs)
+            + format_variables(invalid_inputs)
         )
 
     normalised_icd = InternalConditionalDivision(
@@ -241,6 +247,7 @@ def _validate_icd(
             outputs=remaining_outputs,
             inputs=(body.signature.inputs | denominator_outputs),
         ),
+        used_variables=body.used_variables,
     )
 
 

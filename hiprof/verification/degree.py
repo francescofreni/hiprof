@@ -38,10 +38,10 @@ class _Evaluation:
 
 
 class DegreeBoundEvaluator:
-    def __init__(self, number_of_observed_variables: int) -> None:
-        if number_of_observed_variables < 1:
-            raise ValueError("number_of_observed_variables must be positive")
-        self.n = number_of_observed_variables
+    def __init__(self, number_of_variables: int) -> None:
+        if number_of_variables < 1:
+            raise ValueError("number_of_variables must be positive")
+        self.n = number_of_variables
 
     def evaluate(self, validated: ValidationResult) -> DegreeBound:
         return self._evaluate(validated.formula).degree_bound

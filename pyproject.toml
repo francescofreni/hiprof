@@ -32,10 +32,7 @@ dependencies = [
     "ananke-causal",
     "graphviz",
     "lark",
-    "numpy",
-    "pandas",
     "python-flint",
-    "tqdm",
     "y0==0.2.11",
 ]
 

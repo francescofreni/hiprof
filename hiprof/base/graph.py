@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-
 VARIABLE = r"[A-Z]+(?:0|[1-9][0-9]*)?"
 VARIABLE_PATTERN = re.compile(rf"^{VARIABLE}$")
 EDGE_PATTERN = re.compile(r"<->|->")

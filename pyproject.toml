@@ -31,10 +31,13 @@ keywords = ["causal graphical models", "falsification", "high-probability falsif
 dependencies = [
     "lark",
     "python-flint",
-    "y0==0.2.11",
 ]
 
 [project.optional-dependencies]
+identification = [
+    "y0==0.2.11",
+]
+
 nonidentifiability = [
     "ananke-causal",
 ]

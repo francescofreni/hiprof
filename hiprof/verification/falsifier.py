@@ -8,14 +8,16 @@ from typing import Sequence
 
 from flint import fmpq_mat, fmpz
 
-from hiprof.base.graph import Graph, parse_graph
+from hiprof.base.graph import parse_graph
 from hiprof.formula.formula import Variable
 from hiprof.formula.validation import ValidationResult, parse_and_validate
 from hiprof.utils import format_variables
 
+from ..utils import validate_variables
 from .degree import DegreeBound, DegreeBoundEvaluator
 from .gaussian import GaussianDistribution, GaussianEvaluator, GaussianKernel
 from .utils import align_columns, submatrix
+
 
 _DEFAULT_ENTROPY_BITS = 64
 _DEFAULT_TARGET_BOUND = Fraction(1, 10**14)
@@ -67,12 +69,12 @@ class HPFalsifier:
     ) -> None:
         self.graph = parse_graph(graph)
 
-        self.treatments = _validate_variables(
+        self.treatments = validate_variables(
             treatments,
             name="Treatments",
             graph=self.graph,
         )
-        self.outcomes = _validate_variables(
+        self.outcomes = validate_variables(
             outcomes,
             name="Outcomes",
             graph=self.graph,
@@ -420,54 +422,6 @@ class HPFalsifier:
                 output_indices,
             ),
         )
-
-
-def _validate_variables(
-    variables: str | Sequence[str],
-    name: str,
-    graph: Graph,
-) -> tuple[str, ...]:
-    if isinstance(variables, str):
-        variables = (variables,)
-    else:
-        variables = tuple(variables)
-
-    if not variables:
-        raise ValueError(f"{name} must not be empty.")
-
-    if any(not isinstance(variable, str) for variable in variables):
-        raise TypeError(f"{name} must contain only variable names as strings.")
-
-    duplicates = sorted(
-        {variable for variable in variables if variables.count(variable) > 1}
-    )
-    if duplicates:
-        raise ValueError(
-            f"{name} contains duplicate variables: "
-            f"{', '.join(duplicates)}."
-        )
-
-    unknown = sorted(
-        variable for variable in variables if variable not in graph.nodes
-    )
-    if unknown:
-        raise ValueError(
-            f"{name} contains variables not present in the graph: "
-            f"{', '.join(unknown)}."
-        )
-
-    unobserved = sorted(
-        variable
-        for variable in variables
-        if not graph.nodes[variable].observed
-    )
-    if unobserved:
-        raise ValueError(
-            f"{name} must contain only observed variables. "
-            f"Unobserved variables: {', '.join(unobserved)}."
-        )
-
-    return variables
 
 
 def _validate_target_bound(

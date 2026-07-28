@@ -103,6 +103,17 @@ class Graph:
 
 
 def parse_graph(text: str) -> Graph:
+    """Parse a graph specification.
+
+    Statements may use ``->`` for directed edges or ``<->`` for bidirected
+    edges and may be separated by commas, semicolons, or newlines.
+    Bidirected edges are represented internally by unobserved latent parents.
+
+    :param text: Graph specification to parse.
+    :returns: Parsed graph.
+    :raises ValueError: If the graph syntax is invalid, contains a self-edge,
+        or contains a directed cycle.
+    """
     graph = Graph()
 
     for statement in re.split(r"[,;\n]+", text):

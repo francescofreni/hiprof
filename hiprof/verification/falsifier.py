@@ -25,6 +25,16 @@ _DEFAULT_TARGET_BOUND = Fraction(1, 10**14)
 
 @dataclass(frozen=True)
 class CheckResult:
+    """Result returned by :meth:`HPFalsifier.check`.
+
+    :param accepted: Whether the formula passed the falsification check.
+    :param false_acceptance_bound: Upper bound on the probability of
+        accepting an incorrect formula, when available.
+    :param degree: Polynomial degree used for Schwarz-Zippel's bound.
+    :param entropy_bits: Number of random bits used per sampled coefficient.
+    :param repetitions: Number of independent checks that were run.
+    """
+
     accepted: bool
     false_acceptance_bound: Fraction | None = None
     degree: int | None = None
@@ -61,12 +71,31 @@ class _LinearGaussianSCM:
 
 
 class HPFalsifier:
+    """High-probability falsifier of observational
+    formulas for interventional distributions.
+
+    The falsifier tests a candidate formula by evaluating it
+    on randomly sampled linear Gaussian models and then
+    comparing it with the target interventional distribution.
+    """
+
     def __init__(
         self,
         graph: str,
         treatments: str | Sequence[str],
         outcomes: str | Sequence[str],
     ) -> None:
+        """Initialise a falsifier for a causal query.
+
+        :param graph: Graph specification using ``->`` for directed edges and
+            ``<->`` for bidirected edges.
+        :param treatments: Treatment variable name, or sequence of treatment
+            variable names.
+        :param outcomes: Outcome variable name, or sequence of outcome
+            variable names.
+        :raises TypeError: If treatments or outcomes are not strings.
+        :raises ValueError: If the graph, treatments, or outcomes are invalid.
+        """
         self.graph = parse_graph(graph)
 
         self.treatments = validate_variables(
@@ -92,6 +121,24 @@ class HPFalsifier:
         formula: str | None,
         target_bound: Fraction | float = _DEFAULT_TARGET_BOUND,
     ) -> CheckResult:
+        """Check a formula for the target interventional distribution.
+
+        If ``formula`` is ``None``, the check accepts when the target
+        interventional distribution is non-identifiable.
+
+        :param formula: formula string to check, or ``None`` to check a
+            non-identifiability claim.
+        :param target_bound: Desired upper bound on the false-acceptance
+            probability.
+        :returns: CheckResult containing the acceptance decision and, when
+            applicable, the false-acceptance bound.
+        :raises TypeError: If ``formula`` or ``target_bound`` has an invalid
+            type.
+        :raises ValueError: If the formula is invalid for the configured graph
+            or causal query.
+        :raises ImportError: If ``formula`` is ``None`` and the optional
+            non-identifiability dependencies are not installed.
+        """
         if formula is None:
             return CheckResult(
                 accepted=not self._is_identifiable(),

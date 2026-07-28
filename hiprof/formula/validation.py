@@ -254,7 +254,18 @@ def _validate_icd(
 def validate(
     formula: Formula,
 ) -> ValidationResult:
-    """Validate a formula and return its recursively normalised AST."""
+    """Validate a formula and return its recursively normalised AST.
+
+    Validation checks the algebraic well-formedness of formula nodes,
+    computes the formula signature, and normalises products into a valid
+    sequential order.
+
+    :param formula: Formula AST to validate.
+    :returns: Validation result containing the normalised formula, signature,
+        and variables used by the formula.
+    :raises TypeError: If ``formula`` is not a recognised formula node.
+    :raises ValidationError: If ``formula`` is algebraically invalid.
+    """
     if isinstance(formula, BaseKernel):
         return _validate_base_kernel(formula)
 
@@ -277,4 +288,13 @@ def validate(
 
 
 def parse_and_validate(source: str) -> ValidationResult:
+    """Parse, validate, and normalise a HiProf formula.
+
+    :param source: Formula source string.
+    :returns: Validation result containing the normalised formula, signature,
+        and variables used by the formula.
+    :raises lark.exceptions.UnexpectedInput: If ``source`` is syntactically
+        invalid.
+    :raises ValidationError: If the parsed formula is algebraically invalid.
+    """
     return validate(parse(source))

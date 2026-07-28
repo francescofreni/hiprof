@@ -75,4 +75,15 @@ PARSER = Lark.open(
 
 
 def parse(source: str) -> Formula:
+    """Parse a hiprof formula into an abstract syntax tree.
+
+    This function checks only syntax. Use
+    :func:`hiprof.formula.validation.parse_and_validate` to also validate and
+    normalise the formula.
+
+    :param source: Formula source string.
+    :returns: Parsed formula AST.
+    :raises lark.exceptions.UnexpectedInput: If ``source`` is syntactically
+        invalid.
+    """
     return PARSER.parse(source)

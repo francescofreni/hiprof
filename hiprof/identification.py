@@ -19,12 +19,31 @@ class _RenderedExpression:
 
 
 class IDAlgorithm:
+    """Identify an interventional distribution using the ID algorithm.
+
+    This class wraps :mod:`y0` and renders the resulting identifying formulas
+    into the hiprof formula language.
+    """
+
     def __init__(
         self,
         graph: str,
         treatments: str | Sequence[str],
         outcomes: str | Sequence[str],
     ) -> None:
+        """Initialise the ID algorithm for a causal query.
+
+        :param graph: Graph specification using ``->`` for directed edges and
+            ``<->`` for bidirected edges.
+        :param treatments: Treatment variable name, or sequence of treatment
+            variable names.
+        :param outcomes: Outcome variable name, or sequence of outcome
+            variable names.
+        :raises ImportError: If the optional identification dependencies are
+            not installed.
+        :raises TypeError: If treatments or outcomes are not strings.
+        :raises ValueError: If the graph, treatments, or outcomes are invalid.
+        """
         try:
             from tqdm import TqdmWarning
 
@@ -105,6 +124,15 @@ class IDAlgorithm:
         return graph
 
     def run(self) -> str | None:
+        """Run identification and render the result as a hiprof formula.
+
+        :returns: A formula string compatible with the hiprof grammar
+            if the query is identifiable, otherwise ``None``.
+        :raises ValueError: If the identified formula cannot be rendered into
+            the hiprof grammar.
+        :raises NotImplementedError: If the identified formula uses a
+            fraction form that hiprof cannot represent.
+        """
         treatments = {self._variables[name] for name in self.treatments}
         outcomes = {self._variables[name] for name in self.outcomes}
 

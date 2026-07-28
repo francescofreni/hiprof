@@ -5,10 +5,9 @@ from dataclasses import dataclass
 from itertools import combinations
 from typing import Any, Mapping, Sequence
 
-from hiprof.base.graph import parse_graph
 from hiprof.formula.validation import parse_and_validate
-
-from ..utils import validate_variables
+from hiprof.graph import parse_graph
+from hiprof.utils import validate_variables
 
 
 @dataclass(frozen=True)

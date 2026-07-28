@@ -8,9 +8,9 @@ from typing import Sequence
 
 from flint import fmpq_mat, fmpz
 
-from hiprof.base.graph import parse_graph
 from hiprof.formula.formula import Variable
 from hiprof.formula.validation import ValidationResult, parse_and_validate
+from hiprof.graph import parse_graph
 from hiprof.utils import format_variables
 
 from ..utils import validate_variables

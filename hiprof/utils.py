@@ -1,6 +1,6 @@
 from typing import Iterable, Sequence
 
-from hiprof.base.graph import Graph
+from hiprof.graph import Graph
 
 from .formula.formula import Variable
 

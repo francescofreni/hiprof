@@ -17,26 +17,6 @@ from .degree import DegreeBound, DegreeBoundEvaluator
 from .gaussian import GaussianDistribution, GaussianEvaluator, GaussianKernel
 from .utils import align_columns, submatrix
 
-
-# Suppress some ananke-related warnings that are safe to ignore.
-warnings.filterwarnings(
-    "ignore",
-    category=FutureWarning,
-    module="google.api_core",
-)
-warnings.filterwarnings(
-    "ignore",
-    message=".*IProgress not found.*",
-)
-warnings.filterwarnings(
-    "ignore",
-    category=FutureWarning,
-    module=r"pgmpy\..*",
-)
-
-from ananke import graphs, identification
-
-
 _DEFAULT_ENTROPY_BITS = 64
 _DEFAULT_TARGET_BOUND = Fraction(1, 10**14)
 
@@ -110,8 +90,6 @@ class HPFalsifier:
         formula: str | None,
         target_bound: Fraction | float = _DEFAULT_TARGET_BOUND,
     ) -> CheckResult:
-        target = _validate_target_bound(target_bound)
-
         if formula is None:
             return CheckResult(
                 accepted=not self._is_identifiable(),
@@ -120,8 +98,7 @@ class HPFalsifier:
         if not isinstance(formula, str):
             raise TypeError("formula must be a string or None.")
 
-        if not self._is_identifiable():
-            return CheckResult(accepted=False)
+        target = _validate_target_bound(target_bound)
 
         validated = parse_and_validate(formula)
         self._validate_formula_variables(validated)
@@ -257,37 +234,66 @@ class HPFalsifier:
             )
 
     def _is_identifiable(self) -> bool:
-        if all(node.observed for node in self.graph.nodes.values()):
-            return True
+        with warnings.catch_warnings():
+            # Suppress some Ananke-related warnings that are safe to ignore.
+            warnings.filterwarnings(
+                "ignore",
+                category=FutureWarning,
+                module="google.api_core",
+            )
+            warnings.filterwarnings(
+                "ignore",
+                message=".*IProgress not found.*",
+            )
+            warnings.filterwarnings(
+                "ignore",
+                category=FutureWarning,
+                module=r"pgmpy\..*",
+            )
 
-        observed_nodes = [
-            name for name, node in self.graph.nodes.items() if node.observed
-        ]
-        directed_edges = [
-            (parent.name, child.name)
-            for parent in self.graph.nodes.values()
-            if parent.observed
-            for child in parent.children
-            if child.observed
-        ]
-        bidirected_edges = sorted(
-            {
-                tuple(sorted(child.name for child in latent.children))
-                for latent in self.graph.nodes.values()
-                if not latent.observed
-            }
-        )
+            try:
+                from ananke import graphs, identification
+            except ImportError as error:
+                raise ImportError(
+                    "Verifying non-identifiability claims (`formula=None`) "
+                    "requires the optional `ananke-causal` dependency. "
+                    "Install it with "
+                    '`pip install "hiprof[nonidentifiability]"`.'
+                ) from error
 
-        graph = graphs.ADMG(
-            observed_nodes,
-            di_edges=directed_edges,
-            bi_edges=bidirected_edges,
-        )
-        return identification.OneLineID(
-            graph,
-            treatments=self.treatments,
-            outcomes=self.outcomes,
-        ).id()
+            if all(node.observed for node in self.graph.nodes.values()):
+                return True
+
+            observed_nodes = [
+                name
+                for name, node in self.graph.nodes.items()
+                if node.observed
+            ]
+            directed_edges = [
+                (parent.name, child.name)
+                for parent in self.graph.nodes.values()
+                if parent.observed
+                for child in parent.children
+                if child.observed
+            ]
+            bidirected_edges = sorted(
+                {
+                    tuple(sorted(child.name for child in latent.children))
+                    for latent in self.graph.nodes.values()
+                    if not latent.observed
+                }
+            )
+
+            graph = graphs.ADMG(
+                observed_nodes,
+                di_edges=directed_edges,
+                bi_edges=bidirected_edges,
+            )
+            return identification.OneLineID(
+                graph,
+                treatments=self.treatments,
+                outcomes=self.outcomes,
+            ).id()
 
     def _sample_scm(self, entropy_bits: int) -> _LinearGaussianSCM:
         if entropy_bits < 1:

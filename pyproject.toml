@@ -29,7 +29,6 @@ authors = [
 keywords = ["causal graphical models", "falsification", "high-probability falsifier",
             "identification", "verification"]
 dependencies = [
-    "ananke-causal",
     "graphviz",
     "lark",
     "python-flint",
@@ -37,6 +36,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+nonidentifiability = [
+    "ananke-causal",
+]
+
 dev = [
     "black[d]",
     "coverage",
@@ -46,9 +49,6 @@ dev = [
     "ruff",
     "types-PyYAML",
 ]
-
-[project.scripts]
-hiprof = "hiprof.ui:main"
 
 # -----------------------------------------------------------------------------
 # TOOL CONFIGURATION

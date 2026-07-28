@@ -4,6 +4,7 @@ from ..verification import DegreeBoundEvaluator
 from .formula import format_ast
 from .validation import ValidationError, parse_and_validate
 
+
 EXAMPLES = [
     "p(A, B) / p(B)",
     "p(X)p(X')",
@@ -17,7 +18,7 @@ EXAMPLES = [
 
 
 def main() -> None:
-    evaluator = DegreeBoundEvaluator(number_of_observed_variables=10)
+    evaluator = DegreeBoundEvaluator(number_of_variables=10)
 
     for source in EXAMPLES:
         print("\n" + "=" * 78 + "\n")

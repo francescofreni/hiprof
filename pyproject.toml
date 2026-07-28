@@ -29,7 +29,6 @@ authors = [
 keywords = ["causal graphical models", "falsification", "high-probability falsifier",
             "identification", "verification"]
 dependencies = [
-    "graphviz",
     "lark",
     "python-flint",
     "y0==0.2.11",

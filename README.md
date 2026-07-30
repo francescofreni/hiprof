@@ -101,6 +101,11 @@ To include the optional features:
 pip install -e ".[identification,nonidentifiability]"
 ```
 
+Run the test suite with
+```bash
+pytest
+```
+
 
 ## 📜 Citation
 

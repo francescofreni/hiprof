@@ -1,6 +1,9 @@
-"""Verify the napkin formula."""
+"""Verify the napkin formula and redundant-input handling."""
+
+from __future__ import annotations
 
 from textwrap import dedent
+from typing import Sequence
 
 from hiprof import HPFalsifier
 
@@ -9,13 +12,27 @@ def report(
     falsifier: HPFalsifier,
     label: str,
     formula: str,
+    redundant_inputs: str | Sequence[str] | None = None,
 ) -> None:
     formula = dedent(formula).strip()
 
     print(f"\n{label}")
     print("Formula:")
     print(formula)
-    print(f"Result: {falsifier.check(formula).accepted}")
+
+    if redundant_inputs is not None:
+        print(f"Declared redundant inputs: {redundant_inputs}")
+
+    try:
+        result = falsifier.check(
+            formula,
+            redundant_inputs=redundant_inputs,
+        )
+    except ValueError as error:
+        print(f"Validation error: {error}")
+        return
+
+    print(f"Result: {result.accepted}")
 
 
 def main() -> None:
@@ -50,8 +67,14 @@ def main() -> None:
     )
     report(
         falsifier,
-        "Napkin formula retaining Z as a free input",
+        "Napkin formula retaining undeclared free input Z",
         conditional_formula,
+    )
+    report(
+        falsifier,
+        "Napkin formula with Z declared redundant",
+        conditional_formula,
+        redundant_inputs="Z",
     )
     report(
         falsifier,

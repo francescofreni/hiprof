@@ -16,6 +16,24 @@ from hiprof.verification.falsifier import (
 )
 
 
+NAPKIN_GRAPH = "X -> Y; W -> Z; Z -> X; X <-> W; W <-> Y"
+
+NAPKIN_CONDITIONAL_FORMULA = (
+    "icd_{X | Z} { "
+    "sum_{W} { p(Y, X | Z, W) p(W) } "
+    "}"
+)
+
+NAPKIN_SUMMED_FORMULA = (
+    "sum_{Z} { "
+    "icd_{X | Z} { "
+    "sum_{W} { p(Y, X | Z, W) p(W) } "
+    "} "
+    "p(Z) "
+    "}"
+)
+
+
 def fixed_getrandbits(bits: int) -> int:
     return 1 if bits else 0
 
@@ -41,7 +59,10 @@ def test_target_bound_validation_accepts_fraction_and_float() -> None:
     assert _validate_target_bound(0.25) == Fraction(1, 4)
 
 
-@pytest.mark.parametrize("target_bound", [0.0, 1.0, Fraction(0), Fraction(1)])
+@pytest.mark.parametrize(
+    "target_bound",
+    [0.0, 1.0, Fraction(0), Fraction(1)],
+)
 def test_target_bound_validation_rejects_out_of_range(
     target_bound: Fraction | float,
 ) -> None:
@@ -137,7 +158,7 @@ def test_check_accepts_frontdoor_formula(
     assert result.accepted
 
 
-def test_napkin_formula_retaining_z_is_accepted(
+def test_napkin_formula_summed_over_z_is_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -145,12 +166,47 @@ def test_napkin_formula_retaining_z_is_accepted(
         fixed_getrandbits,
     )
     falsifier = HPFalsifier(
-        graph="X -> Y; W -> Z; Z -> X; X <-> W; W <-> Y",
+        graph=NAPKIN_GRAPH,
         treatments="X",
         outcomes="Y",
     )
 
-    result = falsifier.check("icd_{X | Z} { sum_{W} { p(Y, X | Z, W) p(W) } }")
+    result = falsifier.check(NAPKIN_SUMMED_FORMULA)
+
+    assert result.accepted
+
+
+def test_napkin_formula_rejects_undeclared_free_z() -> None:
+    falsifier = HPFalsifier(
+        graph=NAPKIN_GRAPH,
+        treatments="X",
+        outcomes="Y",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="free inputs other than the treatments",
+    ):
+        falsifier.check(NAPKIN_CONDITIONAL_FORMULA)
+
+
+def test_napkin_formula_accepts_z_declared_redundant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier.getrandbits",
+        fixed_getrandbits,
+    )
+    falsifier = HPFalsifier(
+        graph=NAPKIN_GRAPH,
+        treatments="X",
+        outcomes="Y",
+    )
+
+    result = falsifier.check(
+        NAPKIN_CONDITIONAL_FORMULA,
+        redundant_inputs="Z",
+    )
 
     assert result.accepted
 
@@ -163,12 +219,84 @@ def test_check_rejects_observational_conditional_on_napkin(
         fixed_getrandbits,
     )
     falsifier = HPFalsifier(
-        graph="X -> Y; W -> Z; Z -> X; X <-> W; W <-> Y",
+        graph=NAPKIN_GRAPH,
         treatments="X",
         outcomes="Y",
     )
 
     assert not falsifier.check("p(Y | X)").accepted
+
+
+def test_check_rejects_nonredundant_declared_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier.getrandbits",
+        fixed_getrandbits,
+    )
+    falsifier = HPFalsifier(
+        graph="X -> Y; Z -> Y",
+        treatments="X",
+        outcomes="Y",
+    )
+
+    result = falsifier.check(
+        "p(Y | X, Z)",
+        redundant_inputs="Z",
+    )
+
+    assert not result.accepted
+
+
+def test_check_rejects_unused_redundant_input_declaration() -> None:
+    falsifier = HPFalsifier(
+        graph="Z -> X; X -> Y",
+        treatments="X",
+        outcomes="Y",
+    )
+
+    with pytest.raises(ValueError, match="not free inputs"):
+        falsifier.check(
+            "p(Y | X)",
+            redundant_inputs="Z",
+        )
+
+
+@pytest.mark.parametrize("redundant_input", ["X", "Y"])
+def test_check_rejects_query_variables_as_redundant(
+    redundant_input: str,
+) -> None:
+    falsifier = HPFalsifier(
+        graph="X -> Y",
+        treatments="X",
+        outcomes="Y",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="distinct from treatments and outcomes",
+    ):
+        falsifier.check(
+            "p(Y | X)",
+            redundant_inputs=redundant_input,
+        )
+
+
+def test_check_rejects_redundant_inputs_for_none_formula() -> None:
+    falsifier = HPFalsifier(
+        graph="Z -> X; X -> Y",
+        treatments="X",
+        outcomes="Y",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="cannot be used when formula is None",
+    ):
+        falsifier.check(
+            None,
+            redundant_inputs="Z",
+        )
 
 
 def test_check_rejects_non_string_formula() -> None:

@@ -120,6 +120,7 @@ class HPFalsifier:
         self,
         formula: str | None,
         target_bound: Fraction | float = _DEFAULT_TARGET_BOUND,
+        redundant_inputs: str | Sequence[str] | None = None,
     ) -> CheckResult:
         """Check a formula for the target interventional distribution.
 
@@ -130,6 +131,10 @@ class HPFalsifier:
             non-identifiability claim.
         :param target_bound: Desired upper bound on the false-acceptance
             probability.
+        :param redundant_inputs: Variables that may appear as redundant
+            free inputs of the final kernel, but are declared to be
+            redundant because the kernel is constant with respect to them.
+            They are not marginalized or removed syntactically.
         :returns: CheckResult containing the acceptance decision and, when
             applicable, the false-acceptance bound.
         :raises TypeError: If ``formula`` or ``target_bound`` has an invalid
@@ -139,19 +144,31 @@ class HPFalsifier:
         :raises ImportError: If ``formula`` is ``None`` and the optional
             non-identifiability dependencies are not installed.
         """
+        if formula is not None and not isinstance(formula, str):
+            raise TypeError("formula must be a string or None.")
+
+        declared_redundant_inputs = self._validate_redundant_inputs(
+            redundant_inputs,
+        )
+
         if formula is None:
+            if declared_redundant_inputs:
+                raise ValueError(
+                    "redundant_inputs cannot be used when formula is None."
+                )
+
             return CheckResult(
                 accepted=not self._is_identifiable(),
             )
-
-        if not isinstance(formula, str):
-            raise TypeError("formula must be a string or None.")
 
         target = _validate_target_bound(target_bound)
 
         validated = parse_and_validate(formula)
         self._validate_formula_variables(validated)
-        self._validate_formula_signature(validated)
+        self._validate_formula_signature(
+            validated,
+            declared_redundant_inputs,
+        )
 
         number_of_variables = len(self.graph.nodes)
         degree_bound = DegreeBoundEvaluator(
@@ -204,19 +221,16 @@ class HPFalsifier:
             candidate = GaussianEvaluator(joint).evaluate(validated)
             target_kernel = self._build_interventional_kernel(scm)
 
-            # The formula may have additional free inputs, as in the
-            # Napkin formula. We discard such inputs only if the
-            # evaluated kernel is invariant with respect to them.
-            extra_input_indices = tuple(
+            redundant_input_indices = tuple(
                 index
                 for index, variable in enumerate(candidate.inputs)
-                if variable not in target_inputs
+                if variable in declared_redundant_inputs
             )
 
             if any(
                 candidate.mean_linear[row, column] != 0
                 for row in range(candidate.mean_linear.nrows())
-                for column in extra_input_indices
+                for column in redundant_input_indices
             ):
                 return CheckResult(
                     accepted=False,
@@ -247,6 +261,31 @@ class HPFalsifier:
             repetitions=repetitions,
         )
 
+    def _validate_redundant_inputs(
+        self,
+        redundant_inputs: str | Sequence[str] | None,
+    ) -> frozenset[Variable]:
+        if redundant_inputs is None:
+            return frozenset()
+
+        names = validate_variables(
+            redundant_inputs,
+            name="Redundant inputs",
+            graph=self.graph,
+        )
+
+        forbidden = frozenset(names) & (
+            frozenset(self.treatments) | frozenset(self.outcomes)
+        )
+        if forbidden:
+            raise ValueError(
+                "Redundant inputs must be distinct from treatments and "
+                "outcomes. Invalid variables: "
+                f"{', '.join(sorted(forbidden))}."
+            )
+
+        return frozenset(Variable(name) for name in names)
+
     def _validate_formula_variables(
         self,
         validated: ValidationResult,
@@ -272,14 +311,41 @@ class HPFalsifier:
     def _validate_formula_signature(
         self,
         validated: ValidationResult,
+        declared_redundant_inputs: frozenset[Variable],
     ) -> None:
-        expected_outputs = frozenset(Variable(name) for name in self.outcomes)
+        expected_outputs = frozenset(
+            Variable(name) for name in self.outcomes
+        )
 
         if validated.signature.outputs != expected_outputs:
             raise ValueError(
                 "The formula must yield exactly the outputs "
                 f"{format_variables(expected_outputs)}, but yielded "
                 f"{format_variables(validated.signature.outputs)}."
+            )
+
+        treatment_inputs = frozenset(
+            Variable(name) for name in self.treatments
+        )
+        extra_inputs = validated.signature.inputs - treatment_inputs
+
+        undeclared_inputs = extra_inputs - declared_redundant_inputs
+        if undeclared_inputs:
+            names = sorted(variable.name for variable in undeclared_inputs)
+            raise ValueError(
+                "The formula has free inputs other than the treatments: "
+                f"{format_variables(undeclared_inputs)}. These inputs must "
+                "either be eliminated from the final formula or explicitly "
+                "declared for invariance checking, for example "
+                f"`redundant_inputs={names!r}`."
+            )
+
+        unused_declarations = declared_redundant_inputs - extra_inputs
+        if unused_declarations:
+            raise ValueError(
+                "The following declared redundant inputs are not free inputs "
+                "of the formula: "
+                f"{format_variables(unused_declarations)}."
             )
 
     def _is_identifiable(self) -> bool:

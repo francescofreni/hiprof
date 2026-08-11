@@ -1,3 +1,11 @@
+"""Adapter between y0 output and hiprof formula.
+
+This module is used to build a y0 graph, run ID,
+and render the result back into hiprof's formula language.
+Available when the optional ``identification'' dependencies
+are installed.
+"""
+
 from __future__ import annotations
 
 import warnings
@@ -8,6 +16,28 @@ from typing import Any, Mapping, Sequence
 from hiprof.formula.validation import parse_and_validate
 from hiprof.graph import parse_graph
 from hiprof.utils import validate_variables
+
+
+_dsl: Any | None
+_identify_outcomes: Any | None
+_mixed_graph: Any | None
+
+try:
+    from tqdm import TqdmWarning
+
+    # Suppress a tqdm warning that is safe to ignore.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=TqdmWarning)
+
+        from y0 import dsl as _dsl
+        from y0.algorithm.identify import (
+            identify_outcomes as _identify_outcomes,
+        )
+        from y0.graph import NxMixedGraph as _mixed_graph
+except ImportError:
+    _dsl = None
+    _identify_outcomes = None
+    _mixed_graph = None
 
 
 @dataclass(frozen=True)
@@ -41,28 +71,20 @@ class IDAlgorithm:
             variable names.
         :raises ImportError: If the optional identification dependencies are
             not installed.
-        :raises TypeError: If treatments or outcomes are not strings.
+        :raises TypeError: If treatments or outcomes are not strings
+            or sequences.
         :raises ValueError: If the graph, treatments, or outcomes are invalid.
         """
-        try:
-            from tqdm import TqdmWarning
-
-            # Suppress tqdm warning that is safe to ignore
-            warnings.filterwarnings("ignore", category=TqdmWarning)
-
-            from y0 import dsl
-            from y0.algorithm.identify import identify_outcomes
-            from y0.graph import NxMixedGraph
-        except ImportError as error:
+        if _dsl is None or _identify_outcomes is None or _mixed_graph is None:
             raise ImportError(
                 "IDAlgorithm requires the optional `identification` "
                 "dependencies. Install them with "
                 '`pip install "hiprof[identification]"`.'
-            ) from error
+            )
 
-        self._dsl = dsl
-        self._identify_outcomes = identify_outcomes
-        self._mixed_graph = NxMixedGraph
+        self._dsl = _dsl
+        self._identify_outcomes = _identify_outcomes
+        self._mixed_graph = _mixed_graph
 
         self.graph = parse_graph(graph)
 
@@ -295,7 +317,7 @@ class _Y0Renderer:
             and fraction.denominator.expression == fraction.numerator
         ):
             raise NotImplementedError(
-                "The HiProf grammar cannot represent this arbitrary y0 "
+                "The hiprof grammar cannot represent this arbitrary y0 "
                 "fraction. Expected either a quotient of two base kernels "
                 "or a numerator divided by one of its marginalisations."
             )

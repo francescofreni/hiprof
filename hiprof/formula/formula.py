@@ -96,6 +96,13 @@ def _tuple_text(variables: tuple[Variable, ...]) -> str:
 
 
 def format_ast(formula: Formula, indent: int = 0) -> str:
+    """Return representation of a formula AST.
+
+    :param formula: Formula AST node to format.
+    :param indent: Number of leading spaces for the top-level line.
+    :return: Indented multiline string representation of the formula AST.
+    """
+
     prefix = " " * indent
     field = " " * (indent + 4)
 

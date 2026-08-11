@@ -1,4 +1,8 @@
-"""Compare formulas across graphs to reproduce Figure 1."""
+"""Compare formulas across graphs to reproduce Figure 1 of
+F. Freni, L. Henckel, and S. Weichwald.
+"Verifying formulas for interventional distributions".
+arXiv preprint arXiv:2607.13883, 2026.
+"""
 
 from collections.abc import Sequence
 from textwrap import dedent

@@ -42,6 +42,11 @@ nonidentifiability = [
     "ananke-causal",
 ]
 
+all = [
+    "y0==0.2.11",
+    "ananke-causal",
+]
+
 dev = [
     "black[d]",
     "coverage",

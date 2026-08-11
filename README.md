@@ -34,12 +34,17 @@ Two optional feature gates provide additional functionality:
   [`ananke-causal`](https://gitlab.com/causal/ananke) and enables verification
   of non-identifiability claims.
 
-Install either feature, or both:
+Install optional features individually:
 
 ```bash
 pip install "hiprof[identification] @ git+https://github.com/francescofreni/hiprof.git"
 pip install "hiprof[nonidentifiability] @ git+https://github.com/francescofreni/hiprof.git"
-pip install "hiprof[identification,nonidentifiability] @ git+https://github.com/francescofreni/hiprof.git"
+```
+
+or install all optional features:
+
+```bash
+pip install "hiprof[all] @ git+https://github.com/francescofreni/hiprof.git"
 ```
 
 The same requirement strings can be used with `uv pip install`.
@@ -64,6 +69,9 @@ sum_{M} {
 """
 
 falsifier.check(formula)
+# Output:
+# True
+# False-acceptance bound: 5.421e-18
 ```
 
 

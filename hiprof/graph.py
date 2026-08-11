@@ -22,12 +22,20 @@ class Graph:
     nodes: dict[str, Node] = field(default_factory=dict)
 
     def __str__(self) -> str:
+        isolated_nodes = sorted(
+            node.name
+            for node in self.nodes.values()
+            if node.observed and not node.parents and not node.children
+        )
         edges = sorted(
             (parent.name, child.name)
             for parent in self.nodes.values()
             for child in parent.children
         )
-        return "\n".join(f"{parent} -> {child}" for parent, child in edges)
+        statements = isolated_nodes + [
+            f"{parent} -> {child}" for parent, child in edges
+        ]
+        return "\n".join(statements)
 
     def add_node(
         self,
@@ -105,9 +113,10 @@ class Graph:
 def parse_graph(text: str) -> Graph:
     """Parse a graph specification.
 
-    Statements may use ``->`` for directed edges or ``<->`` for bidirected
-    edges and may be separated by commas, semicolons, or newlines.
-    Bidirected edges are represented internally by unobserved latent parents.
+    Statements may specify an isolated node using its variable name, or use
+    ``->`` for directed edges and ``<->`` for bidirected edges. Statements
+    may be separated by commas, semicolons, or newlines. Bidirected edges are
+    represented internally by unobserved latent parents.
 
     :param text: Graph specification to parse.
     :returns: Parsed graph.
@@ -125,9 +134,14 @@ def parse_graph(text: str) -> Graph:
         edge_matches = list(EDGE_PATTERN.finditer(statement))
 
         if not edge_matches:
+            if VARIABLE_PATTERN.fullmatch(statement) is not None:
+                graph.add_node(statement)
+                continue
+
             raise ValueError(
-                f"Invalid edge in statement {statement!r}. "
-                "Accepted edge types are '->' and '<->'."
+                f"Invalid graph statement {statement!r}. "
+                "Each statement must be either a variable name or contain "
+                "exactly one edge of type '->' or '<->'."
             )
 
         if len(edge_matches) > 1:

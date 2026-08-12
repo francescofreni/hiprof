@@ -151,7 +151,7 @@ class HPFalsifier:
         :param redundant_inputs: Variables that may appear as redundant
             free inputs of the final kernel, but are declared to be
             redundant because the kernel is constant with respect to them.
-            They are not marginalized or removed syntactically.
+            They are not marginalized or removed semantically.
         :returns: CheckResult containing the acceptance decision and, when
             applicable, the false-acceptance bound.
         :raises TypeError: If ``formula`` or ``target_bound`` has an invalid
@@ -201,15 +201,7 @@ class HPFalsifier:
             entropy_bits,
         )
 
-        if one_run_bound <= target:
-            repetitions = 1
-            false_acceptance_bound = one_run_bound
-        elif one_run_bound < 1:
-            repetitions, false_acceptance_bound = _repeat_until_target(
-                one_run_bound,
-                target,
-            )
-        else:
+        if one_run_bound >= 1:
             entropy_bits = _minimum_bits_below_one(
                 degree=equality_degree,
                 minimum_bits=_DEFAULT_ENTROPY_BITS + 1,
@@ -219,14 +211,14 @@ class HPFalsifier:
                 entropy_bits,
             )
 
-            if one_run_bound <= target:
-                repetitions = 1
-                false_acceptance_bound = one_run_bound
-            else:
-                repetitions, false_acceptance_bound = _repeat_until_target(
-                    one_run_bound,
-                    target,
-                )
+        if one_run_bound <= target:
+            repetitions = 1
+            false_acceptance_bound = one_run_bound
+        else:
+            repetitions, false_acceptance_bound = _repeat_until_target(
+                one_run_bound,
+                target,
+            )
 
         target_outputs = tuple(Variable(name) for name in self.outcomes)
         target_inputs = tuple(Variable(name) for name in self.treatments)

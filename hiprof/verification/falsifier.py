@@ -230,23 +230,30 @@ class HPFalsifier:
             candidate = GaussianEvaluator(joint).evaluate(validated)
             target_kernel = self._build_interventional_kernel(scm)
 
-            redundant_input_indices = tuple(
-                index
-                for index, variable in enumerate(candidate.inputs)
-                if variable in declared_redundant_inputs
-            )
-
-            if any(
-                candidate.mean_linear[row, column] != 0
-                for row in range(candidate.mean_linear.nrows())
-                for column in redundant_input_indices
-            ):
-                return CheckResult(
-                    accepted=False,
-                    degree=equality_degree,
-                    entropy_bits=entropy_bits,
-                    repetitions=repetition,
+            if declared_redundant_inputs:
+                # check invariance before dropping redundant input
+                # columns to allow early rejection if the linear
+                # coefficient is non-zero (which means that the
+                # inputs are not redundant)
+                redundant_input_indices = tuple(
+                    index
+                    for index, variable in enumerate(candidate.inputs)
+                    if variable in declared_redundant_inputs
                 )
+
+                has_nonzero_redundant_coefficient = any(
+                    candidate.mean_linear[row, column] != 0
+                    for row in range(candidate.mean_linear.nrows())
+                    for column in redundant_input_indices
+                )
+
+                if has_nonzero_redundant_coefficient:
+                    return CheckResult(
+                        accepted=False,
+                        degree=equality_degree,
+                        entropy_bits=entropy_bits,
+                        repetitions=repetition,
+                    )
 
             candidate = _align_kernel(
                 candidate,

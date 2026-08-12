@@ -201,8 +201,8 @@ class HPFalsifier:
             entropy_bits,
         )
 
-        if one_run_bound >= 1:
-            entropy_bits = _minimum_bits_below_one(
+        if one_run_bound >= Fraction(1, 2):
+            entropy_bits = _minimum_bits_below_half(
                 degree=equality_degree,
                 minimum_bits=_DEFAULT_ENTROPY_BITS + 1,
             )
@@ -612,7 +612,7 @@ def _repeat_until_target(
     return repetitions, repeated_bound
 
 
-def _minimum_bits_below_one(
+def _minimum_bits_below_half(
     degree: int,
     minimum_bits: int,
 ) -> int:
@@ -621,7 +621,7 @@ def _minimum_bits_below_one(
     if minimum_bits < 1:
         raise ValueError("minimum_bits must be positive.")
 
-    return max(minimum_bits, degree.bit_length())
+    return max(minimum_bits, degree.bit_length() + 1)
 
 
 def _sample_fmpz(

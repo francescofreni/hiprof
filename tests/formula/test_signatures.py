@@ -54,4 +54,4 @@ def test_kernel_signature_text_formats_empty_sets() -> None:
         inputs=frozenset(),
     )
 
-    assert str(signature) == "Y | empty"
+    assert str(signature) == "Y | \u2205"

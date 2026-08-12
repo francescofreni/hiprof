@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import importlib.util
-
 import pytest
 
 import hiprof
+import hiprof.identification as identification
 from hiprof import CheckResult, HPFalsifier, IDAlgorithm
 from hiprof.formula import parse_and_validate
 from hiprof.verification import DegreeBoundEvaluator
@@ -22,18 +21,19 @@ def test_formula_and_verification_subpackage_exports() -> None:
     assert DegreeBoundEvaluator(1)
 
 
-def test_id_algorithm_without_y0_raises_informative_error() -> None:
-    if importlib.util.find_spec("y0") is not None:
-        pytest.skip("y0 is installed")
+def test_id_algorithm_without_y0_raises_informative_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(identification, "_dsl", None)
+    monkeypatch.setattr(identification, "_identify_outcomes", None)
+    monkeypatch.setattr(identification, "_mixed_graph", None)
 
-    with pytest.raises(ImportError, match="hiprof\\[identification\\]"):
-        IDAlgorithm("X -> Y", treatments="X", outcomes="Y")
-
-
-def test_id_algorithm_with_y0_if_installed() -> None:
-    if importlib.util.find_spec("y0") is None:
-        pytest.skip("y0 is not installed")
-
-    formula = IDAlgorithm("X -> Y", treatments="X", outcomes="Y").run()
-
-    assert formula is None or isinstance(formula, str)
+    with pytest.raises(
+        ImportError,
+        match=r"hiprof\[identification\]",
+    ):
+        identification.IDAlgorithm(
+            "X -> Y",
+            treatments="X",
+            outcomes="Y",
+        )

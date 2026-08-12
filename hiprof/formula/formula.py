@@ -85,7 +85,7 @@ class KernelSignature:
 
 def _format_set(variables: Iterable[Variable]) -> str:
     text = ", ".join(str(variable) for variable in sorted(variables, key=str))
-    return text or "empty"
+    return text or "\u2205"
 
 
 def _tuple_text(variables: tuple[Variable, ...]) -> str:

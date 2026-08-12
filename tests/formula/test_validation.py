@@ -23,7 +23,7 @@ from hiprof.formula.validation import (
         ("icd_{Y | Z} { p(Y, X) }", "invalid"),
     ],
 )
-def test_validation_rejects_invalid_formulae(
+def test_validation_rejects_invalid_formulas(
     source: str,
     message: str,
 ) -> None:

@@ -18,20 +18,20 @@ from hiprof.verification.falsifier import (
 
 NAPKIN_GRAPH = "X -> Y; W -> Z; Z -> X; X <-> W; W <-> Y"
 
-NAPKIN_CONDITIONAL_FORMULA = (
-    "icd_{X | Z} { "
-    "sum_{W} { p(Y, X | Z, W) p(W) } "
-    "}"
-)
+NAPKIN_CONDITIONAL_FORMULA = """
+    icd_{X | Z} {
+        sum_{W} { p(Y, X | Z, W) p(W) }
+    }
+"""
 
-NAPKIN_SUMMED_FORMULA = (
-    "sum_{Z} { "
-    "icd_{X | Z} { "
-    "sum_{W} { p(Y, X | Z, W) p(W) } "
-    "} "
-    "p(Z) "
-    "}"
-)
+NAPKIN_SUMMED_FORMULA = """
+    sum_{Z} {
+        icd_{X | Z} {
+            sum_{W} { p(Y, X | Z, W) p(W) }
+        }
+        p(Z)
+    }
+"""
 
 
 def fixed_getrandbits(bits: int) -> int:

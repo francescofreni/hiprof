@@ -9,7 +9,7 @@ from hiprof.graph import parse_graph
 from hiprof.verification.degree import DegreeBound
 from hiprof.verification.falsifier import (
     _equality_test_degree,
-    _minimum_bits_below_one,
+    _minimum_bits_below_half,
     _repeat_until_target,
     _validate_target_bound,
     _zippel_ratio,
@@ -79,7 +79,15 @@ def test_bound_planning_helpers_are_deterministic() -> None:
         3,
         Fraction(1, 8),
     )
-    assert _minimum_bits_below_one(64, 1) == 7
+
+
+def test_minimum_bits_produces_bound_below_half() -> None:
+    degree = 64
+    bits = _minimum_bits_below_half(degree, minimum_bits=1)
+
+    assert bits == 8
+    assert _zippel_ratio(degree, bits) < Fraction(1, 2)
+    assert _zippel_ratio(degree, bits - 1) >= Fraction(1, 2)
 
 
 def test_bound_helpers_reject_invalid_inputs() -> None:
@@ -89,6 +97,10 @@ def test_bound_helpers_reject_invalid_inputs() -> None:
         _zippel_ratio(1, 0)
     with pytest.raises(ValueError, match=r"\[0, 1\)"):
         _repeat_until_target(Fraction(1), Fraction(1, 2))
+    with pytest.raises(ValueError, match="non-negative"):
+        _minimum_bits_below_half(-1, 1)
+    with pytest.raises(ValueError, match="positive"):
+        _minimum_bits_below_half(1, 0)
     with pytest.raises(TypeError, match="Fraction or float"):
         _validate_target_bound("0.1")  # type: ignore[arg-type]
 

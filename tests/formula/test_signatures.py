@@ -22,6 +22,12 @@ def test_base_kernel_signature() -> None:
     }
 
 
+def test_base_quotient_normalises_to_icd_signature() -> None:
+    result = parse_and_validate("p(A, B | C) / p(B | C)")
+
+    assert names(result.signature) == ({"A"}, {"B", "C"})
+
+
 def test_product_signature_discards_inputs_generated_by_other_factors() -> (
     None
 ):
@@ -40,12 +46,6 @@ def test_icd_signature_retains_denominator_outputs_as_inputs() -> None:
     result = parse_and_validate("icd_{X | Z} { p(Y, X | Z) }")
 
     assert names(result.signature) == ({"Y"}, {"X", "Z"})
-
-
-def test_base_quotient_normalises_to_icd_signature() -> None:
-    result = parse_and_validate("p(A, B | C) / p(B | C)")
-
-    assert names(result.signature) == ({"A"}, {"B", "C"})
 
 
 def test_kernel_signature_text_formats_empty_sets() -> None:

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from textwrap import dedent, indent
+
 import pytest
 from lark import UnexpectedInput
 
 from hiprof.formula.formula import (
     BaseKernel,
     BaseQuotient,
+    Formula,
     InternalConditionalDivision,
     Marginalisation,
     Product,
@@ -32,17 +35,6 @@ def test_parse_base_kernel_with_inputs() -> None:
     )
 
 
-def test_parse_product_marginalisation_and_icd() -> None:
-    formula = parse("icd_{X | Z} { sum_{W} { p(Y, X | Z, W) p(W) } }")
-
-    assert isinstance(formula, InternalConditionalDivision)
-    assert formula.denominator_outputs == (Variable("X"),)
-    assert formula.denominator_inputs == (Variable("Z"),)
-    assert isinstance(formula.body, Marginalisation)
-    assert formula.body.variables == (Variable("W"),)
-    assert isinstance(formula.body.body, Product)
-
-
 def test_parse_standalone_base_quotient() -> None:
     formula = parse("p(A, B | C) / p(B | C)")
 
@@ -56,6 +48,17 @@ def test_parse_standalone_base_quotient() -> None:
             inputs=(Variable("C"),),
         ),
     )
+
+
+def test_parse_product_marginalisation_and_icd() -> None:
+    formula = parse("icd_{X | Z} { sum_{W} { p(Y, X | Z, W) p(W) } }")
+
+    assert isinstance(formula, InternalConditionalDivision)
+    assert formula.denominator_outputs == (Variable("X"),)
+    assert formula.denominator_inputs == (Variable("Z"),)
+    assert isinstance(formula.body, Marginalisation)
+    assert formula.body.variables == (Variable("W"),)
+    assert isinstance(formula.body.body, Product)
 
 
 @pytest.mark.parametrize(
@@ -75,5 +78,60 @@ def test_parse_rejects_invalid_syntax(source: str) -> None:
         parse(source)
 
 
-def test_format_ast_is_stable_for_public_debug_output() -> None:
-    assert "BaseKernel" in format_ast(parse("p(Y | X)"))
+def test_format_ast_formats_base_quotient() -> None:
+    formatted = format_ast(parse("p(A, B | C) / p(B | C)"))
+
+    assert formatted == dedent("""\
+        BaseQuotient(
+            numerator=(
+                BaseKernel(
+                    outputs=(A, B),
+                    inputs=(C,),
+                )
+            ),
+            denominator=(
+                BaseKernel(
+                    outputs=(B,),
+                    inputs=(C,),
+                )
+            ),
+        )""")
+
+
+def test_format_ast_is_stable_for_nested_public_debug_output() -> None:
+    formula = parse("icd_{X | Z} { sum_{W} { p(Y, X | Z, W) p(W) } }")
+    expected = dedent("""\
+        InternalConditionalDivision(
+            denominator_outputs=(X,),
+            denominator_inputs=(Z,),
+            body=(
+                Marginalisation(
+                    variables=(W,),
+                    body=(
+                        Product(
+                            factors=(
+                                BaseKernel(
+                                    outputs=(Y, X),
+                                    inputs=(Z, W),
+                                ),
+                                BaseKernel(
+                                    outputs=(W,),
+                                    inputs=(),
+                                ),
+                            ),
+                        )
+                    ),
+                )
+            ),
+        )""")
+
+    assert format_ast(formula) == expected
+    assert format_ast(formula, indent=2) == indent(expected, "  ")
+
+
+def test_format_ast_rejects_unknown_nodes() -> None:
+    class Unknown(Formula):
+        pass
+
+    with pytest.raises(TypeError, match="Unknown formula node: Unknown"):
+        format_ast(Unknown())

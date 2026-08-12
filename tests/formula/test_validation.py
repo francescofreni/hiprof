@@ -10,6 +10,21 @@ from hiprof.formula.validation import (
 )
 
 
+def test_validation_orders_product_sequentially() -> None:
+    result = parse_and_validate("p(Y | X) p(X)")
+
+    assert isinstance(result.formula, Product)
+    assert result.formula.factors == (
+        BaseKernel(outputs=(Variable("X"),)),
+        BaseKernel(outputs=(Variable("Y"),), inputs=(Variable("X"),)),
+    )
+
+
+def test_product_with_cyclic_dependencies_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="no valid sequential ordering"):
+        parse_and_validate("p(X | Y) p(Y | X)")
+
+
 @pytest.mark.parametrize(
     ("source", "message"),
     [
@@ -29,21 +44,6 @@ def test_validation_rejects_invalid_formulas(
 ) -> None:
     with pytest.raises(ValidationError, match=message):
         parse_and_validate(source)
-
-
-def test_validation_orders_product_sequentially() -> None:
-    result = parse_and_validate("p(Y | X) p(X)")
-
-    assert isinstance(result.formula, Product)
-    assert result.formula.factors == (
-        BaseKernel(outputs=(Variable("X"),)),
-        BaseKernel(outputs=(Variable("Y"),), inputs=(Variable("X"),)),
-    )
-
-
-def test_product_with_cyclic_dependencies_is_rejected() -> None:
-    with pytest.raises(ValidationError, match="no valid sequential ordering"):
-        parse_and_validate("p(X | Y) p(Y | X)")
 
 
 def test_validate_rejects_unknown_node_type() -> None:

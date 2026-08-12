@@ -12,24 +12,6 @@ from hiprof.verification.gaussian import (
 from .helpers import matrix_entries, matrix_shape, q
 
 
-def test_marginalisation_can_leave_empty_output_set() -> None:
-    joint = GaussianDistribution(
-        variables=(Variable("X"),),
-        mean=fmpq_mat(1, 1, [5]),
-        covariance=fmpq_mat(1, 1, [7]),
-    )
-
-    kernel = GaussianEvaluator(joint).evaluate(
-        parse_and_validate("sum_{X} { p(X) }")
-    )
-
-    assert kernel.outputs == ()
-    assert kernel.inputs == ()
-    assert matrix_shape(kernel.mean_intercept) == (0, 1)
-    assert matrix_shape(kernel.mean_linear) == (0, 0)
-    assert matrix_shape(kernel.covariance) == (0, 0)
-
-
 def test_marginalisation_selects_remaining_outputs_in_original_order() -> None:
     joint = GaussianDistribution(
         variables=(Variable("X"), Variable("Y"), Variable("Z")),
@@ -47,3 +29,21 @@ def test_marginalisation_selects_remaining_outputs_in_original_order() -> None:
         (q(4), q(2)),
         (q(2), q(6)),
     )
+
+
+def test_marginalisation_can_leave_empty_output_set() -> None:
+    joint = GaussianDistribution(
+        variables=(Variable("X"),),
+        mean=fmpq_mat(1, 1, [5]),
+        covariance=fmpq_mat(1, 1, [7]),
+    )
+
+    kernel = GaussianEvaluator(joint).evaluate(
+        parse_and_validate("sum_{X} { p(X) }")
+    )
+
+    assert kernel.outputs == ()
+    assert kernel.inputs == ()
+    assert matrix_shape(kernel.mean_intercept) == (0, 1)
+    assert matrix_shape(kernel.mean_linear) == (0, 0)
+    assert matrix_shape(kernel.covariance) == (0, 0)

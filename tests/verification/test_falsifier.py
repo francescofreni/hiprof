@@ -54,80 +54,22 @@ def test_check_result_bool_string_and_repr() -> None:
     assert str(CheckResult(accepted=False)) == "False"
 
 
-def test_target_bound_validation_accepts_fraction_and_float() -> None:
-    assert _validate_target_bound(Fraction(1, 10)) == Fraction(1, 10)
-    assert _validate_target_bound(0.25) == Fraction(1, 4)
-
-
-@pytest.mark.parametrize(
-    "target_bound",
-    [0.0, 1.0, Fraction(0), Fraction(1)],
-)
-def test_target_bound_validation_rejects_out_of_range(
-    target_bound: Fraction | float,
+def test_check_accepts_marginal_for_isolated_outcome(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    with pytest.raises(ValueError, match="strictly between"):
-        _validate_target_bound(target_bound)
-
-
-def test_bound_planning_helpers_are_deterministic() -> None:
-    degree = _equality_test_degree(DegreeBound(2, 3, 4, 5), 3)
-
-    assert degree == 10
-    assert _zippel_ratio(10, 4) == Fraction(10, 16)
-    assert _repeat_until_target(Fraction(1, 2), Fraction(1, 8)) == (
-        3,
-        Fraction(1, 8),
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier.getrandbits",
+        fixed_getrandbits,
+    )
+    falsifier = HPFalsifier(
+        graph="X; Y",
+        treatments="X",
+        outcomes="Y",
     )
 
+    result = falsifier.check("p(Y)")
 
-def test_minimum_bits_produces_bound_below_half() -> None:
-    degree = 64
-    bits = _minimum_bits_below_half(degree, minimum_bits=1)
-
-    assert bits == 8
-    assert _zippel_ratio(degree, bits) < Fraction(1, 2)
-    assert _zippel_ratio(degree, bits - 1) >= Fraction(1, 2)
-
-
-def test_bound_helpers_reject_invalid_inputs() -> None:
-    with pytest.raises(ValueError, match="non-negative"):
-        _zippel_ratio(-1, 4)
-    with pytest.raises(ValueError, match="positive"):
-        _zippel_ratio(1, 0)
-    with pytest.raises(ValueError, match=r"\[0, 1\)"):
-        _repeat_until_target(Fraction(1), Fraction(1, 2))
-    with pytest.raises(ValueError, match="non-negative"):
-        _minimum_bits_below_half(-1, 1)
-    with pytest.raises(ValueError, match="positive"):
-        _minimum_bits_below_half(1, 0)
-    with pytest.raises(TypeError, match="Fraction or float"):
-        _validate_target_bound("0.1")  # type: ignore[arg-type]
-
-
-def test_falsifier_validates_graph_and_query_inputs() -> None:
-    with pytest.raises(ValueError, match="directed cycle"):
-        parse_graph("X -> Y; Y -> X")
-    with pytest.raises(ValueError, match="Self-edge"):
-        parse_graph("X -> X")
-    with pytest.raises(ValueError, match="duplicate"):
-        HPFalsifier("X -> Y", treatments=("X", "X"), outcomes="Y")
-    with pytest.raises(ValueError, match="disjoint"):
-        HPFalsifier("X -> Y", treatments="X", outcomes="X")
-
-
-def test_check_rejects_formula_with_wrong_outputs() -> None:
-    falsifier = HPFalsifier("X -> Y", treatments="X", outcomes="Y")
-
-    with pytest.raises(ValueError, match="yield exactly"):
-        falsifier.check("p(X)")
-
-
-def test_check_rejects_variables_not_in_graph() -> None:
-    falsifier = HPFalsifier("X -> Y", treatments="X", outcomes="Y")
-
-    with pytest.raises(ValueError, match="observed variables"):
-        falsifier.check("p(Y | Z)")
+    assert result.accepted
 
 
 def test_check_accepts_backdoor_adjustment(
@@ -148,6 +90,27 @@ def test_check_accepts_backdoor_adjustment(
     assert result.accepted
     assert result.false_acceptance_bound is not None
     assert result.repetitions >= 1
+
+
+def test_check_accepts_effect_through_explicit_latent_mediator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier.getrandbits",
+        fixed_getrandbits,
+    )
+    falsifier = HPFalsifier(
+        graph="X -> U; U -> Y",
+        treatments="X",
+        outcomes="Y",
+        latents="U",
+    )
+
+    result = falsifier.check("p(Y | X)")
+
+    assert falsifier.latents == ("U",)
+    assert not falsifier.graph.nodes["U"].observed
+    assert result.accepted
 
 
 def test_check_accepts_frontdoor_formula(
@@ -188,6 +151,22 @@ def test_napkin_formula_summed_over_z_is_accepted(
     assert result.accepted
 
 
+def test_check_rejects_observational_conditional_on_napkin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier.getrandbits",
+        fixed_getrandbits,
+    )
+    falsifier = HPFalsifier(
+        graph=NAPKIN_GRAPH,
+        treatments="X",
+        outcomes="Y",
+    )
+
+    assert not falsifier.check("p(Y | X)").accepted
+
+
 def test_napkin_formula_rejects_undeclared_free_z() -> None:
     falsifier = HPFalsifier(
         graph=NAPKIN_GRAPH,
@@ -221,22 +200,6 @@ def test_napkin_formula_accepts_z_declared_redundant(
     )
 
     assert result.accepted
-
-
-def test_check_rejects_observational_conditional_on_napkin(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "hiprof.verification.falsifier.getrandbits",
-        fixed_getrandbits,
-    )
-    falsifier = HPFalsifier(
-        graph=NAPKIN_GRAPH,
-        treatments="X",
-        outcomes="Y",
-    )
-
-    assert not falsifier.check("p(Y | X)").accepted
 
 
 def test_check_rejects_nonredundant_declared_input(
@@ -311,8 +274,145 @@ def test_check_rejects_redundant_inputs_for_none_formula() -> None:
         )
 
 
+def test_falsifier_validates_graph_and_query_inputs() -> None:
+    with pytest.raises(ValueError, match="directed cycle"):
+        parse_graph("X -> Y; Y -> X")
+    with pytest.raises(ValueError, match="Self-edge"):
+        parse_graph("X -> X")
+    with pytest.raises(ValueError, match="duplicate"):
+        HPFalsifier("X -> Y", treatments=("X", "X"), outcomes="Y")
+    with pytest.raises(ValueError, match="disjoint"):
+        HPFalsifier("X -> Y", treatments="X", outcomes="X")
+
+
+def test_falsifier_rejects_latent_query_variable() -> None:
+    with pytest.raises(ValueError, match="only observed variables"):
+        HPFalsifier(
+            graph="U -> Y",
+            treatments="U",
+            outcomes="Y",
+            latents="U",
+        )
+
+
+def test_falsifier_rejects_unknown_latent_variable() -> None:
+    with pytest.raises(ValueError, match="not present in the graph"):
+        HPFalsifier(
+            graph="X -> Y",
+            treatments="X",
+            outcomes="Y",
+            latents="U",
+        )
+
+
+def test_check_rejects_formula_with_wrong_outputs() -> None:
+    falsifier = HPFalsifier("X -> Y", treatments="X", outcomes="Y")
+
+    with pytest.raises(ValueError, match="yield exactly"):
+        falsifier.check("p(X)")
+
+
+def test_check_rejects_variables_not_in_graph() -> None:
+    falsifier = HPFalsifier("X -> Y", treatments="X", outcomes="Y")
+
+    with pytest.raises(ValueError, match="observed variables"):
+        falsifier.check("p(Y | Z)")
+
+
 def test_check_rejects_non_string_formula() -> None:
     falsifier = HPFalsifier("X -> Y", treatments="X", outcomes="Y")
 
     with pytest.raises(TypeError, match="string or None"):
         falsifier.check(1)  # type: ignore[arg-type]
+
+
+def test_check_uses_default_entropy_when_one_run_bound_is_small(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier.getrandbits",
+        fixed_getrandbits,
+    )
+    falsifier = HPFalsifier("X -> Y", treatments="X", outcomes="Y")
+
+    result = falsifier.check("p(Y | X)", target_bound=Fraction(1, 2))
+
+    assert result.accepted
+    assert result.degree == 6
+    assert result.entropy_bits == 64
+    assert result.repetitions == 1
+    assert result.false_acceptance_bound == Fraction(6, 1 << 64)
+
+
+def test_check_increases_entropy_when_one_run_bound_reaches_half(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    degree = 1 << 64
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier._equality_test_degree",
+        lambda *args: degree,
+    )
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier.getrandbits",
+        fixed_getrandbits,
+    )
+    falsifier = HPFalsifier("X -> Y", treatments="X", outcomes="Y")
+
+    result = falsifier.check("p(Y | X)", target_bound=Fraction(1, 3))
+
+    assert result.accepted
+    assert result.degree == degree
+    assert result.entropy_bits == 66
+    assert result.repetitions == 1
+    assert result.false_acceptance_bound == Fraction(1, 4)
+
+
+def test_target_bound_validation_accepts_fraction_and_float() -> None:
+    assert _validate_target_bound(Fraction(1, 10)) == Fraction(1, 10)
+    assert _validate_target_bound(0.25) == Fraction(1, 4)
+
+
+@pytest.mark.parametrize(
+    "target_bound",
+    [0.0, 1.0, Fraction(0), Fraction(1)],
+)
+def test_target_bound_validation_rejects_out_of_range(
+    target_bound: Fraction | float,
+) -> None:
+    with pytest.raises(ValueError, match="strictly between"):
+        _validate_target_bound(target_bound)
+
+
+def test_bound_planning_helpers_are_deterministic() -> None:
+    degree = _equality_test_degree(DegreeBound(2, 3, 4, 5), 3)
+
+    assert degree == 10
+    assert _zippel_ratio(10, 4) == Fraction(10, 16)
+    assert _repeat_until_target(Fraction(1, 2), Fraction(1, 8)) == (
+        3,
+        Fraction(1, 8),
+    )
+
+
+def test_minimum_bits_produces_bound_below_half() -> None:
+    degree = 64
+    bits = _minimum_bits_below_half(degree, minimum_bits=1)
+
+    assert bits == 8
+    assert _zippel_ratio(degree, bits) < Fraction(1, 2)
+    assert _zippel_ratio(degree, bits - 1) >= Fraction(1, 2)
+
+
+def test_bound_helpers_reject_invalid_inputs() -> None:
+    with pytest.raises(ValueError, match="non-negative"):
+        _zippel_ratio(-1, 4)
+    with pytest.raises(ValueError, match="positive"):
+        _zippel_ratio(1, 0)
+    with pytest.raises(ValueError, match=r"\[0, 1\)"):
+        _repeat_until_target(Fraction(1), Fraction(1, 2))
+    with pytest.raises(ValueError, match="non-negative"):
+        _minimum_bits_below_half(-1, 1)
+    with pytest.raises(ValueError, match="positive"):
+        _minimum_bits_below_half(1, 0)
+    with pytest.raises(TypeError, match="Fraction or float"):
+        _validate_target_bound("0.1")  # type: ignore[arg-type]

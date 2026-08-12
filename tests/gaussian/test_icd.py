@@ -20,18 +20,6 @@ def three_variable_joint() -> GaussianDistribution:
     )
 
 
-def test_icd_with_no_remaining_outputs_returns_empty_output_kernel() -> None:
-    kernel = GaussianEvaluator(three_variable_joint()).evaluate(
-        parse_and_validate("icd_{Y | X} { p(Y | X) }")
-    )
-
-    assert kernel.outputs == ()
-    assert kernel.inputs == (Variable("X"), Variable("Y"))
-    assert matrix_shape(kernel.mean_intercept) == (0, 1)
-    assert matrix_shape(kernel.mean_linear) == (0, 2)
-    assert matrix_shape(kernel.covariance) == (0, 0)
-
-
 def test_icd_of_p_yz_given_x_returns_p_y_given_xz() -> None:
     kernel = GaussianEvaluator(three_variable_joint()).evaluate(
         parse_and_validate("icd_{Z | X} { p(Y, Z | X) }")
@@ -51,3 +39,15 @@ def test_icd_retains_body_inputs_and_adds_denominator_outputs() -> None:
 
     assert kernel.outputs == (Variable("Y"),)
     assert kernel.inputs == (Variable("Z"), Variable("X"))
+
+
+def test_icd_with_no_remaining_outputs_returns_empty_output_kernel() -> None:
+    kernel = GaussianEvaluator(three_variable_joint()).evaluate(
+        parse_and_validate("icd_{Y | X} { p(Y | X) }")
+    )
+
+    assert kernel.outputs == ()
+    assert kernel.inputs == (Variable("X"), Variable("Y"))
+    assert matrix_shape(kernel.mean_intercept) == (0, 1)
+    assert matrix_shape(kernel.mean_linear) == (0, 2)
+    assert matrix_shape(kernel.covariance) == (0, 0)

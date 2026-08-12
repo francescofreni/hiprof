@@ -6,9 +6,10 @@ from hiprof.formula.validation import parse_and_validate
 from hiprof.verification.degree import DegreeBound, DegreeBoundEvaluator
 
 
-def test_degree_evaluator_requires_positive_variable_count() -> None:
-    with pytest.raises(ValueError, match="positive"):
-        DegreeBoundEvaluator(number_of_variables=0)
+def test_degree_bound_string_is_readable() -> None:
+    assert str(DegreeBound(1, 2, 3, 4)) == (
+        "DegreeBound(mean=(num=1, den=2), " "covariance=(num=3, den=4))"
+    )
 
 
 def test_base_degree_bound_without_conditioning() -> None:
@@ -56,7 +57,6 @@ def test_product_and_icd_degree_bounds_are_composed() -> None:
     )
 
 
-def test_degree_bound_string_is_readable() -> None:
-    assert str(DegreeBound(1, 2, 3, 4)) == (
-        "DegreeBound(mean=(num=1, den=2), " "covariance=(num=3, den=4))"
-    )
+def test_degree_evaluator_requires_positive_variable_count() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        DegreeBoundEvaluator(number_of_variables=0)

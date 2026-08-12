@@ -3,9 +3,10 @@ from __future__ import annotations
 import pytest
 
 import hiprof
+import hiprof.formula as formula
 import hiprof.identification as identification
 from hiprof import CheckResult, HPFalsifier, IDAlgorithm
-from hiprof.formula import parse_and_validate
+from hiprof.formula import format_ast, parse_and_validate
 from hiprof.verification import DegreeBoundEvaluator
 
 
@@ -17,7 +18,12 @@ def test_package_level_exports() -> None:
 
 
 def test_formula_and_verification_subpackage_exports() -> None:
-    assert parse_and_validate("p(Y)").signature.outputs
+    assert formula.__all__ == ["format_ast", "parse_and_validate"]
+
+    parsed = parse_and_validate("p(Y)")
+
+    assert parsed.signature.outputs
+    assert format_ast(parsed.formula).startswith("BaseKernel(")
     assert DegreeBoundEvaluator(1)
 
 

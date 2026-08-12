@@ -14,7 +14,7 @@ from itertools import combinations
 from typing import Any, Mapping, Sequence
 
 from hiprof.formula.validation import parse_and_validate
-from hiprof.graph import parse_graph
+from hiprof.graph import Graph, Node, parse_graph
 from hiprof.utils import validate_variables
 
 
@@ -60,6 +60,7 @@ class IDAlgorithm:
         graph: str,
         treatments: str | Sequence[str],
         outcomes: str | Sequence[str],
+        latents: str | Sequence[str] | None = None,
     ) -> None:
         """Initialise the ID algorithm for a causal query.
 
@@ -69,11 +70,14 @@ class IDAlgorithm:
             variable names.
         :param outcomes: Outcome variable name, or sequence of outcome
             variable names.
+        :param latents: Variable name, or sequence of variable names, to treat
+            as unobserved. Every latent variable must be a node in ``graph``.
         :raises ImportError: If the optional identification dependencies are
             not installed.
-        :raises TypeError: If treatments or outcomes are not strings
-            or sequences.
-        :raises ValueError: If the graph, treatments, or outcomes are invalid.
+        :raises TypeError: If treatments, outcomes, or latents have invalid
+            types.
+        :raises ValueError: If the graph, treatments, outcomes, or latents are
+            invalid.
         """
         if _dsl is None or _identify_outcomes is None or _mixed_graph is None:
             raise ImportError(
@@ -87,6 +91,18 @@ class IDAlgorithm:
         self._mixed_graph = _mixed_graph
 
         self.graph = parse_graph(graph)
+
+        if latents is None:
+            self.latents: tuple[str, ...] = ()
+        else:
+            self.latents = validate_variables(
+                latents,
+                name="Latents",
+                graph=self.graph,
+            )
+
+        for latent in self.latents:
+            self.graph.nodes[latent].observed = False
 
         self.treatments = validate_variables(
             treatments,
@@ -114,30 +130,17 @@ class IDAlgorithm:
         self._graph = self._build_y0_graph()
 
     def _build_y0_graph(self) -> Any:
-        directed_edges = [
-            (self._variables[parent.name], self._variables[child.name])
-            for parent in self.graph.nodes.values()
-            if parent.observed
-            for child in parent.children
-            if child.observed
-        ]
-
-        bidirected_edges = []
-        for latent in self.graph.nodes.values():
-            if latent.observed:
-                continue
-
-            observed_children = sorted(
-                child.name for child in latent.children if child.observed
-            )
-            bidirected_edges.extend(
-                (self._variables[left], self._variables[right])
-                for left, right in combinations(observed_children, 2)
-            )
+        directed_edges, bidirected_edges = _latent_projection(self.graph)
 
         graph = self._mixed_graph.from_edges(
-            directed=directed_edges,
-            undirected=bidirected_edges,
+            directed=[
+                (self._variables[parent], self._variables[child])
+                for parent, child in sorted(directed_edges)
+            ],
+            undirected=[
+                (self._variables[left], self._variables[right])
+                for left, right in sorted(bidirected_edges)
+            ],
         )
 
         for variable in self._variables.values():
@@ -170,6 +173,49 @@ class IDAlgorithm:
         rendered = _Y0Renderer(self.treatments, dsl=self._dsl).render(formula)
         parse_and_validate(rendered)
         return rendered
+
+
+def _latent_projection(
+    graph: Graph,
+) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    observed_nodes = tuple(
+        node for node in graph.nodes.values() if node.observed
+    )
+    latent_nodes = tuple(
+        node for node in graph.nodes.values() if not node.observed
+    )
+
+    directed_edges = {
+        (source.name, target)
+        for source in observed_nodes
+        for target in _first_observed_descendants(source)
+    }
+
+    bidirected_edges: set[tuple[str, str]] = set()
+    for latent in latent_nodes:
+        descendants = sorted(_first_observed_descendants(latent))
+        bidirected_edges.update(combinations(descendants, 2))
+
+    return directed_edges, bidirected_edges
+
+
+def _first_observed_descendants(node: Node) -> set[str]:
+    observed_descendants: set[str] = set()
+    visited: set[Node] = set()
+    pending = list(node.children)
+
+    while pending:
+        descendant = pending.pop()
+        if descendant in visited:
+            continue
+        visited.add(descendant)
+
+        if descendant.observed:
+            observed_descendants.add(descendant.name)
+        else:
+            pending.extend(descendant.children)
+
+    return observed_descendants
 
 
 class _Y0Renderer:

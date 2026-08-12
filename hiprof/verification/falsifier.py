@@ -84,6 +84,7 @@ class HPFalsifier:
         graph: str,
         treatments: str | Sequence[str],
         outcomes: str | Sequence[str],
+        latents: str | Sequence[str] | None = None,
     ) -> None:
         """Initialise a falsifier for a causal query.
 
@@ -93,10 +94,26 @@ class HPFalsifier:
             variable names.
         :param outcomes: Outcome variable name, or sequence of outcome
             variable names.
-        :raises TypeError: If treatments or outcomes are not strings.
-        :raises ValueError: If the graph, treatments, or outcomes are invalid.
+        :param latents: Variable name, or sequence of variable names, to treat
+            as unobserved. Every latent variable must be a node in ``graph``.
+        :raises TypeError: If treatments, outcomes, or latents have invalid
+            types.
+        :raises ValueError: If the graph, treatments, outcomes, or latents are
+            invalid.
         """
         self.graph = parse_graph(graph)
+
+        if latents is None:
+            self.latents: tuple[str, ...] = ()
+        else:
+            self.latents = validate_variables(
+                latents,
+                name="Latents",
+                graph=self.graph,
+            )
+
+        for latent in self.latents:
+            self.graph.nodes[latent].observed = False
 
         self.treatments = validate_variables(
             treatments,
@@ -368,6 +385,7 @@ class HPFalsifier:
 
             try:
                 from ananke import graphs, identification
+                from ananke.graphs.admg import latent_project_single_vertex
             except ImportError as error:
                 raise ImportError(
                     "Verifying non-identifiability claims (`formula=None`) "
@@ -387,25 +405,23 @@ class HPFalsifier:
             directed_edges = [
                 (parent.name, child.name)
                 for parent in self.graph.nodes.values()
-                if parent.observed
                 for child in parent.children
-                if child.observed
             ]
-            bidirected_edges = sorted(
-                {
-                    tuple(sorted(child.name for child in latent.children))
-                    for latent in self.graph.nodes.values()
-                    if not latent.observed
-                }
-            )
 
-            graph = graphs.ADMG(
-                observed_nodes,
+            latent_dag = graphs.DAG(
+                vertices=list(self.graph.nodes),
                 di_edges=directed_edges,
-                bi_edges=bidirected_edges,
             )
+            admg = latent_dag
+            for variable in reversed(latent_dag.topological_sort()):
+                if variable not in observed_nodes:
+                    admg = latent_project_single_vertex(
+                        vertex=variable,
+                        graph=admg,
+                    )
+
             return identification.OneLineID(
-                graph,
+                admg,
                 treatments=self.treatments,
                 outcomes=self.outcomes,
             ).id()

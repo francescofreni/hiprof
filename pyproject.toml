@@ -43,8 +43,7 @@ nonidentifiability = [
 ]
 
 all = [
-    "y0==0.2.11",
-    "ananke-causal",
+    "hiprof[identification,nonidentifiability]"
 ]
 
 dev = [

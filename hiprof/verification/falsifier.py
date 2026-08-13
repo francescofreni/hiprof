@@ -16,7 +16,7 @@ from hiprof.utils import format_variables
 from ..utils import validate_variables
 from .degree import DegreeBound, DegreeBoundEvaluator
 from .gaussian import GaussianDistribution, GaussianEvaluator, GaussianKernel
-from .utils import align_columns, submatrix
+from .utils import submatrix
 
 
 _DEFAULT_ENTROPY_BITS = 64
@@ -70,6 +70,91 @@ class _LinearGaussianSCM:
     coefficients: fmpq_mat  # (child, parent)
     intercepts: fmpq_mat  # (n, 1)
     noise_covariance: fmpq_mat  # diagonal (n, n)
+
+    def joint_distribution(self) -> GaussianDistribution:
+        identity = _identity(len(self.variables))
+        system = identity - self.coefficients
+        inverse = system.solve(identity)
+
+        return GaussianDistribution(
+            variables=tuple(Variable(name) for name in self.variables),
+            mean=inverse * self.intercepts,
+            covariance=(
+                inverse * self.noise_covariance * inverse.transpose()
+            ),
+        )
+
+    def interventional_kernel(
+        self,
+        treatments: tuple[str, ...],
+        outcomes: tuple[str, ...],
+    ) -> GaussianKernel:
+        index = {
+            variable: position
+            for position, variable in enumerate(self.variables)
+        }
+        treatment_indices = tuple(index[name] for name in treatments)
+        treatment_set = set(treatment_indices)
+        non_treatment_indices = tuple(
+            i for i in range(len(self.variables)) if i not in treatment_set
+        )
+
+        coefficients_non_treatment = submatrix(
+            self.coefficients,
+            non_treatment_indices,
+            non_treatment_indices,
+        )
+        coefficients_treatment = submatrix(
+            self.coefficients,
+            non_treatment_indices,
+            treatment_indices,
+        )
+        intercepts = submatrix(
+            self.intercepts,
+            non_treatment_indices,
+            (0,),
+        )
+        noise_covariance = submatrix(
+            self.noise_covariance,
+            non_treatment_indices,
+            non_treatment_indices,
+        )
+
+        identity = _identity(len(non_treatment_indices))
+        system = identity - coefficients_non_treatment
+        inverse = system.solve(identity)
+
+        mean_intercept = inverse * intercepts
+        mean_linear = inverse * coefficients_treatment
+        covariance = inverse * noise_covariance * inverse.transpose()
+
+        non_treatment_position = {
+            original_index: position
+            for position, original_index in enumerate(non_treatment_indices)
+        }
+        output_indices = tuple(
+            non_treatment_position[index[name]] for name in outcomes
+        )
+
+        return GaussianKernel(
+            outputs=tuple(Variable(name) for name in outcomes),
+            inputs=tuple(Variable(name) for name in treatments),
+            mean_intercept=submatrix(
+                mean_intercept,
+                output_indices,
+                (0,),
+            ),
+            mean_linear=submatrix(
+                mean_linear,
+                output_indices,
+                range(len(treatments)),
+            ),
+            covariance=submatrix(
+                covariance,
+                output_indices,
+                output_indices,
+            ),
+        )
 
 
 class HPFalsifier:
@@ -227,10 +312,13 @@ class HPFalsifier:
 
         for repetition in range(1, repetitions + 1):
             scm = self._sample_scm(entropy_bits)
-            joint = self._build_joint(scm)
+            joint = scm.joint_distribution()
 
             candidate = GaussianEvaluator(joint).evaluate(validated)
-            target_kernel = self._build_interventional_kernel(scm)
+            target_kernel = scm.interventional_kernel(
+                self.treatments,
+                self.outcomes,
+            )
 
             if declared_redundant_inputs:
                 # check invariance before dropping redundant input
@@ -257,13 +345,12 @@ class HPFalsifier:
                         repetitions=repetition,
                     )
 
-            candidate = _align_kernel(
-                candidate,
+            candidate = candidate.align(
                 outputs=target_outputs,
                 inputs=target_inputs,
             )
 
-            if not _kernels_equal(candidate, target_kernel):
+            if candidate != target_kernel:
                 return CheckResult(
                     accepted=False,
                     degree=equality_degree,
@@ -468,93 +555,6 @@ class HPFalsifier:
             ),
         )
 
-    @staticmethod
-    def _build_joint(
-        scm: _LinearGaussianSCM,
-    ) -> GaussianDistribution:
-        mean, covariance = _solve_linear_gaussian(
-            scm.coefficients,
-            scm.intercepts,
-            scm.noise_covariance,
-        )
-
-        return GaussianDistribution(
-            variables=tuple(Variable(name) for name in scm.variables),
-            mean=mean,
-            covariance=covariance,
-        )
-
-    def _build_interventional_kernel(
-        self,
-        scm: _LinearGaussianSCM,
-    ) -> GaussianKernel:
-        index = {
-            variable: position
-            for position, variable in enumerate(scm.variables)
-        }
-        treatment_indices = tuple(index[name] for name in self.treatments)
-        treatment_set = set(treatment_indices)
-        non_treatment_indices = tuple(
-            i for i in range(len(scm.variables)) if i not in treatment_set
-        )
-
-        coefficients_non_treatment = submatrix(
-            scm.coefficients,
-            non_treatment_indices,
-            non_treatment_indices,
-        )
-        coefficients_treatment = submatrix(
-            scm.coefficients,
-            non_treatment_indices,
-            treatment_indices,
-        )
-        intercepts = submatrix(
-            scm.intercepts,
-            non_treatment_indices,
-            (0,),
-        )
-        noise_covariance = submatrix(
-            scm.noise_covariance,
-            non_treatment_indices,
-            non_treatment_indices,
-        )
-
-        identity = _identity(len(non_treatment_indices))
-        system = identity - coefficients_non_treatment
-        inverse = system.solve(identity)
-
-        mean_intercept = inverse * intercepts
-        mean_linear = inverse * coefficients_treatment
-        covariance = inverse * noise_covariance * inverse.transpose()
-
-        non_treatment_position = {
-            original_index: position
-            for position, original_index in enumerate(non_treatment_indices)
-        }
-        output_indices = tuple(
-            non_treatment_position[index[name]] for name in self.outcomes
-        )
-
-        return GaussianKernel(
-            outputs=tuple(Variable(name) for name in self.outcomes),
-            inputs=tuple(Variable(name) for name in self.treatments),
-            mean_intercept=submatrix(
-                mean_intercept,
-                output_indices,
-                (0,),
-            ),
-            mean_linear=submatrix(
-                mean_linear,
-                output_indices,
-                range(len(self.treatments)),
-            ),
-            covariance=submatrix(
-                covariance,
-                output_indices,
-                output_indices,
-            ),
-        )
-
 
 def _validate_target_bound(
     target_bound: Fraction | float,
@@ -643,83 +643,9 @@ def _sample_fmpz(
     return sign * magnitude
 
 
-def _solve_linear_gaussian(
-    coefficients: fmpq_mat,
-    intercepts: fmpq_mat,
-    noise_covariance: fmpq_mat,
-) -> tuple[fmpq_mat, fmpq_mat]:
-    identity = _identity(coefficients.nrows())
-
-    system = identity - coefficients
-    inverse = system.solve(identity)
-
-    return (
-        inverse * intercepts,
-        inverse * noise_covariance * inverse.transpose(),
-    )
-
-
 def _identity(size: int) -> fmpq_mat:
     return fmpq_mat(
         size,
         size,
         [1 if i == j else 0 for i in range(size) for j in range(size)],
-    )
-
-
-def _align_kernel(
-    kernel: GaussianKernel,
-    outputs: tuple[Variable, ...],
-    inputs: tuple[Variable, ...],
-) -> GaussianKernel:
-    output_index = {variable: i for i, variable in enumerate(kernel.outputs)}
-    indices = tuple(output_index[variable] for variable in outputs)
-
-    return GaussianKernel(
-        outputs=outputs,
-        inputs=inputs,
-        mean_intercept=submatrix(
-            kernel.mean_intercept,
-            indices,
-            (0,),
-        ),
-        mean_linear=align_columns(
-            submatrix(
-                kernel.mean_linear,
-                indices,
-                range(len(kernel.inputs)),
-            ),
-            kernel.inputs,
-            inputs,
-        ),
-        covariance=submatrix(
-            kernel.covariance,
-            indices,
-            indices,
-        ),
-    )
-
-
-def _kernels_equal(
-    left: GaussianKernel,
-    right: GaussianKernel,
-) -> bool:
-    return (
-        left.outputs == right.outputs
-        and left.inputs == right.inputs
-        and _matrices_equal(left.mean_intercept, right.mean_intercept)
-        and _matrices_equal(left.mean_linear, right.mean_linear)
-        and _matrices_equal(left.covariance, right.covariance)
-    )
-
-
-def _matrices_equal(left: fmpq_mat, right: fmpq_mat) -> bool:
-    return (
-        left.nrows() == right.nrows()
-        and left.ncols() == right.ncols()
-        and all(
-            left[i, j] == right[i, j]
-            for i in range(left.nrows())
-            for j in range(left.ncols())
-        )
     )

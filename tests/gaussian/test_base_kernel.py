@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import pytest
 from flint import fmpq_mat
 
-from hiprof.formula.formula import Variable
+from hiprof.formula.formula import Formula, Variable
 from hiprof.formula.validation import parse_and_validate
 from hiprof.verification.gaussian import (
     GaussianDistribution,
     GaussianEvaluator,
 )
-from hiprof.verification.utils import align_columns, submatrix
+from hiprof.verification.utils import submatrix
 
 from .helpers import matrix_entries, matrix_shape, q
 
@@ -56,20 +57,16 @@ def test_base_kernel_rejects_variable_out_of_joint_scope() -> None:
         raise AssertionError("Expected KeyError")
 
 
+def test_evaluator_rejects_unknown_formula_node() -> None:
+    evaluator = GaussianEvaluator(two_variable_joint())
+
+    with pytest.raises(TypeError, match="Formula"):
+        evaluator._evaluate(Formula())
+
+
 def test_submatrix_handles_zero_rows_and_columns() -> None:
     matrix = fmpq_mat(2, 2, [1, 2, 3, 4])
 
     assert matrix_shape(submatrix(matrix, (), ())) == (0, 0)
     assert matrix_shape(submatrix(matrix, (), (0, 1))) == (0, 2)
     assert matrix_shape(submatrix(matrix, (0, 1), ())) == (2, 0)
-
-
-def test_align_columns_inserts_exact_zero_columns() -> None:
-    matrix = fmpq_mat(1, 1, [3])
-    aligned = align_columns(
-        matrix,
-        old_variables=(Variable("X"),),
-        new_variables=(Variable("Z"), Variable("X")),
-    )
-
-    assert matrix_entries(aligned) == ((q(0), q(3)),)

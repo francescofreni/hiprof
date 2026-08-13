@@ -3,6 +3,7 @@ from __future__ import annotations
 from fractions import Fraction
 
 import pytest
+from flint import fmpq_mat
 
 from hiprof import CheckResult, HPFalsifier
 from hiprof.graph import parse_graph
@@ -11,6 +12,7 @@ from hiprof.verification.falsifier import (
     _equality_test_degree,
     _minimum_bits_below_half,
     _repeat_until_target,
+    _sample_fmpz,
     _validate_target_bound,
     _zippel_ratio,
 )
@@ -365,6 +367,77 @@ def test_check_increases_entropy_when_one_run_bound_reaches_half(
     assert result.entropy_bits == 66
     assert result.repetitions == 1
     assert result.false_acceptance_bound == Fraction(1, 4)
+
+
+def test_check_repeats_until_false_acceptance_bound_reaches_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier._equality_test_degree",
+        lambda *args: 1,
+    )
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier.getrandbits",
+        fixed_getrandbits,
+    )
+    falsifier = HPFalsifier("X -> Y", treatments="X", outcomes="Y")
+
+    result = falsifier.check(
+        "p(Y | X)",
+        target_bound=Fraction(1, 1 << 128),
+    )
+
+    assert result.accepted
+    assert result.repetitions == 2
+    assert result.false_acceptance_bound == Fraction(1, 1 << 128)
+
+
+def test_sample_scm_respects_graph_structure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier.getrandbits",
+        fixed_getrandbits,
+    )
+    falsifier = HPFalsifier(
+        "X -> Y; X <-> Y",
+        treatments="X",
+        outcomes="Y",
+    )
+
+    scm = falsifier._sample_scm(entropy_bits=4)
+
+    assert scm.variables == ("X", "Y", "U_X_Y")
+    assert scm.coefficients == fmpq_mat(
+        3,
+        3,
+        [
+            0,
+            0,
+            -2,
+            -2,
+            0,
+            -2,
+            0,
+            0,
+            0,
+        ],
+    )
+    assert scm.intercepts == fmpq_mat(3, 1, [-2, -2, -2])
+    assert scm.noise_covariance == fmpq_mat(
+        3,
+        3,
+        [2, 0, 0, 0, 2, 0, 0, 0, 2],
+    )
+
+
+def test_sampling_rejects_nonpositive_entropy() -> None:
+    falsifier = HPFalsifier("X -> Y", treatments="X", outcomes="Y")
+
+    with pytest.raises(ValueError, match="positive"):
+        falsifier._sample_scm(0)
+    with pytest.raises(ValueError, match="at least 1"):
+        _sample_fmpz(0)
 
 
 def test_target_bound_validation_accepts_fraction_and_float() -> None:

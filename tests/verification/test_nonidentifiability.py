@@ -10,6 +10,36 @@ import pytest
 from hiprof import HPFalsifier
 
 
+def install_fake_ananke(monkeypatch: pytest.MonkeyPatch) -> None:
+    ananke = ModuleType("ananke")
+    graphs = ModuleType("ananke.graphs")
+    admg = ModuleType("ananke.graphs.admg")
+    identification = ModuleType("ananke.identification")
+    admg.latent_project_single_vertex = lambda: None  # type: ignore[attr-defined]
+    ananke.graphs = graphs  # type: ignore[attr-defined]
+    ananke.identification = identification  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "ananke", ananke)
+    monkeypatch.setitem(sys.modules, "ananke.graphs", graphs)
+    monkeypatch.setitem(sys.modules, "ananke.graphs.admg", admg)
+    monkeypatch.setitem(sys.modules, "ananke.identification", identification)
+
+
+def test_check_none_rejects_fully_observed_nonidentifiability_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_ananke(monkeypatch)
+    falsifier = HPFalsifier(
+        "X -> Y",
+        treatments="X",
+        outcomes="Y",
+    )
+
+    result = falsifier.check(None)
+
+    assert not result.accepted
+
+
 def test_check_none_projects_explicit_latent_dag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

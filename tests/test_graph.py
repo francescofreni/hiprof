@@ -15,7 +15,7 @@ def directed_edges(graph_source: str) -> set[tuple[str, str]]:
 
 
 def test_parse_graph_preserves_isolated_nodes_and_string_round_trip() -> None:
-    graph = parse_graph("Z, X -> Y;\n")
+    graph = parse_graph("Z, X -> Y")
 
     assert tuple(graph.nodes) == ("Z", "X", "Y")
     assert graph.nodes["Z"].observed
@@ -37,13 +37,46 @@ def test_parse_graph_represents_bidirected_edge_with_latent_parent() -> None:
     assert str(graph) == "U_X_Y -> X\nU_X_Y -> Y"
 
 
+def test_parse_graph_ignores_whitespace() -> None:
+    graph = parse_graph("X < -\t> Y; Z 1")
+
+    assert tuple(graph.nodes) == ("X", "Y", "U_X_Y", "Z1")
+
+
+def test_parse_graph_accepts_newline_and_compound_separators() -> None:
+    graph = parse_graph("X -> Y\nZ,\nU -> V;\nW")
+
+    assert tuple(graph.nodes) == ("X", "Y", "Z", "U", "V", "W")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "",
+        " ",
+        ",X",
+        "X -> Y,",
+        "X -> Y;",
+        "\nX",
+        "X\n",
+        "Z;, U",
+        "Z,,U",
+        "Z\n\nU",
+        "Z;\n\nU",
+    ],
+)
+def test_parse_graph_rejects_empty_statements(source: str) -> None:
+    with pytest.raises(ValueError, match="Statements must be non-empty"):
+        parse_graph(source)
+
+
 @pytest.mark.parametrize(
     ("source", "message"),
     [
         ("X01", "Invalid graph statement"),
         ("X -> Y -> Z", "exactly one edge"),
-        ("x -> Y", "left side"),
-        ("X -> y", "right side"),
+        ("X ->", "right side"),
+        ("-> Y", "left side"),
     ],
 )
 def test_parse_graph_rejects_invalid_statements(
@@ -51,4 +84,10 @@ def test_parse_graph_rejects_invalid_statements(
     message: str,
 ) -> None:
     with pytest.raises(ValueError, match=message):
+        parse_graph(source)
+
+
+@pytest.mark.parametrize("source", ["x -> Y", "X_Y", "X / Y"])
+def test_parse_graph_rejects_invalid_characters(source: str) -> None:
+    with pytest.raises(ValueError, match="Invalid character"):
         parse_graph(source)

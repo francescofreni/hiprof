@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 VARIABLE = r"[A-Z]+(?:0|[1-9][0-9]*)?"
 VARIABLE_PATTERN = re.compile(rf"^{VARIABLE}$")
 EDGE_PATTERN = re.compile(r"<->|->")
+INVALID_CHARACTER_PATTERN = re.compile(r"[^A-Z0-9<>;,\s-]")
+STATEMENT_SEPARATOR_PATTERN = re.compile(r"[,;]\n?|\n")
 
 
 @dataclass(eq=False, slots=True)
@@ -115,8 +117,12 @@ def parse_graph(text: str) -> Graph:
 
     Statements may specify an isolated node using its variable name, or use
     ``->`` for directed edges and ``<->`` for bidirected edges. Statements
-    may be separated by commas, semicolons, or newlines. Bidirected edges are
-    represented internally by unobserved latent parents.
+    are separated by a comma, semicolon, or newline. A comma or semicolon may
+    be followed by one newline as part of the same separator. Separators may
+    not be leading, trailing, or consecutive. Other whitespace is ignored,
+    and all remaining characters must be uppercase letters, digits, ``<``,
+    ``>``, or ``-``. Bidirected edges are represented internally by unobserved
+    latent parents.
 
     :param text: Graph specification to parse.
     :returns: Parsed graph.
@@ -124,13 +130,9 @@ def parse_graph(text: str) -> Graph:
         or contains a directed cycle.
     """
     graph = Graph()
+    text = _normalise_graph_text(text)
 
-    for statement in re.split(r"[,;\n]+", text):
-        statement = statement.strip()
-
-        if not statement:
-            continue
-
+    for statement in _split_graph_statements(text):
         edge_matches = list(EDGE_PATTERN.finditer(statement))
 
         if not edge_matches:
@@ -151,9 +153,9 @@ def parse_graph(text: str) -> Graph:
             )
 
         edge_match = edge_matches[0]
-        left = statement[: edge_match.start()].strip()
+        left = statement[: edge_match.start()]
         edge = edge_match.group()
-        right = statement[edge_match.end() :].strip()
+        right = statement[edge_match.end() :]
 
         if VARIABLE_PATTERN.fullmatch(left) is None:
             raise ValueError(
@@ -183,3 +185,27 @@ def parse_graph(text: str) -> Graph:
 
     graph.check_acyclic()
     return graph
+
+
+def _normalise_graph_text(text: str) -> str:
+    invalid_character = INVALID_CHARACTER_PATTERN.search(text)
+    if invalid_character is not None:
+        character = invalid_character.group()
+        raise ValueError(
+            f"Invalid character {character!r} in graph specification. "
+            "Graph specifications may contain only whitespace, uppercase "
+            "letters, digits, '<', '>', '-', ',', and ';'."
+        )
+
+    return re.sub(r"[^\S\n]+", "", text)
+
+
+def _split_graph_statements(text: str) -> list[str]:
+    statements = STATEMENT_SEPARATOR_PATTERN.split(text)
+    if any(not statement for statement in statements):
+        raise ValueError(
+            "Invalid graph specification. Statements must be non-empty, "
+            "and separators may not be leading, trailing, or consecutive."
+        )
+
+    return statements

@@ -74,6 +74,26 @@ falsifier.check(formula)
 # False-acceptance bound: 5.421e-18
 ```
 
+Adjacency matrices can be translated as follows (`numpy` arrays and `pandas` DataFrames are accepted as well):
+
+```python
+from hiprof import adjacency_to_graph
+
+adjacency = [
+    [0, 1, 1],
+    [0, 0, 1],
+    [1, 0, 0],
+]
+
+graph = adjacency_to_graph(
+    adjacency,
+    nodes=["T", "M", "Y"],
+    edge_direction="from row to column",
+)
+# T -> M
+# T <-> Y
+# M -> Y
+```
 
 ## 📚 Examples
 

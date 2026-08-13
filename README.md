@@ -2,7 +2,7 @@
 
 # Hi Prof 👋: High-Probability Falsifier
 
-Early access 🐣 [Feedback](https://github.com/francescofreni/hiprof/issues/new/choose) very welcome!
+[Feedback](https://github.com/francescofreni/hiprof/issues/new/choose) very welcome!
 
 ## ⚙️ Installation
 
@@ -106,7 +106,7 @@ pip install -e .
 To include the optional features:
 
 ```bash
-pip install -e ".[identification,nonidentifiability]"
+pip install -e ".[all]"
 ```
 
 Run the test suite with

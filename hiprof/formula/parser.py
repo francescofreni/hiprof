@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any, cast
 
 from lark import Lark, Token, Transformer, v_args
 
@@ -15,39 +16,43 @@ from .formula import (
 
 @v_args(inline=True)
 class ToAST(Transformer):
-    def VARIABLE(self, token: Token) -> Variable:
+    @staticmethod
+    def VARIABLE(token: Token) -> Variable:
         return Variable.from_token(str(token))
 
-    def variables(self, *variables: Variable) -> tuple[Variable, ...]:
+    @staticmethod
+    def variables(*variables: Variable) -> tuple[Variable, ...]:
         return variables
 
+    @staticmethod
     def base_kernel(
-        self,
         outputs: tuple[Variable, ...],
         inputs: tuple[Variable, ...] = (),
     ) -> BaseKernel:
         return BaseKernel(outputs=outputs, inputs=inputs)
 
+    @staticmethod
     def base_quotient(
-        self,
         numerator: BaseKernel,
         denominator: BaseKernel,
     ) -> BaseQuotient:
         return BaseQuotient(numerator, denominator)
 
-    def product(self, *factors: Formula) -> Product:
+    @staticmethod
+    def product(*factors: Formula) -> Product:
         return Product(factors)
 
+    @staticmethod
     def marginalisation(
-        self,
         _operator: Token,
         variables: tuple[Variable, ...],
         body: Formula,
     ) -> Marginalisation:
         return Marginalisation(variables, body)
 
+    @staticmethod
     def internal_conditional_division(
-        self, *items
+        *items: Any,
     ) -> InternalConditionalDivision:
         if len(items) == 2:
             denominator_outputs, body = items
@@ -60,12 +65,13 @@ class ToAST(Transformer):
             body=body,
         )
 
-    def grouped(self, formula: Formula) -> Formula:
+    @staticmethod
+    def grouped(formula: Formula) -> Formula:
         return formula
 
 
 PARSER = Lark.open(
-    Path(__file__).with_name("grammar.lark"),
+    str(Path(__file__).with_name("grammar.lark")),
     parser="lalr",
     lexer="contextual",
     start="start",
@@ -86,4 +92,4 @@ def parse(source: str) -> Formula:
     :raises lark.exceptions.UnexpectedInput: If ``source`` is syntactically
         invalid.
     """
-    return PARSER.parse(source)
+    return cast(Formula, PARSER.parse(source))

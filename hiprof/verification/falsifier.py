@@ -52,6 +52,8 @@ class CheckResult:
         if self.degree is None:
             return "True"
 
+        assert self.false_acceptance_bound is not None
+
         return (
             "True\n"
             "False-acceptance bound: "
@@ -419,11 +421,13 @@ class HPFalsifier:
                         graph=admg,
                     )
 
-            return identification.OneLineID(
-                admg,
-                treatments=self.treatments,
-                outcomes=self.outcomes,
-            ).id()
+            return bool(
+                identification.OneLineID(
+                    admg,
+                    treatments=self.treatments,
+                    outcomes=self.outcomes,
+                ).id()
+            )
 
     def _sample_scm(self, entropy_bits: int) -> _LinearGaussianSCM:
         if entropy_bits < 1:

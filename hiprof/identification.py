@@ -18,9 +18,9 @@ from hiprof.graph import Graph, Node, parse_graph
 from hiprof.utils import validate_variables
 
 
-_dsl: Any | None
-_identify_outcomes: Any | None
-_mixed_graph: Any | None
+_dsl: Any | None = None
+_identify_outcomes: Any | None = None
+_mixed_graph: Any | None = None
 
 try:
     from tqdm import TqdmWarning
@@ -29,15 +29,15 @@ try:
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=TqdmWarning)
 
-        from y0 import dsl as _dsl
-        from y0.algorithm.identify import (
-            identify_outcomes as _identify_outcomes,
-        )
-        from y0.graph import NxMixedGraph as _mixed_graph
+        from y0 import dsl
+        from y0.algorithm.identify import identify_outcomes
+        from y0.graph import NxMixedGraph
 except ImportError:
-    _dsl = None
-    _identify_outcomes = None
-    _mixed_graph = None
+    pass
+else:
+    _dsl = dsl
+    _identify_outcomes = identify_outcomes
+    _mixed_graph = NxMixedGraph
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,9 @@ from hiprof.verification import DegreeBoundEvaluator
 
 
 def test_package_level_exports() -> None:
+    assert hiprof.__doc__ is not None
+    assert "Hi Prof" in hiprof.__doc__
+    assert "HPFalsifier" in hiprof.__doc__
     assert hiprof.__all__ == ["CheckResult", "HPFalsifier", "IDAlgorithm"]
     assert hiprof.CheckResult is CheckResult
     assert hiprof.HPFalsifier is HPFalsifier

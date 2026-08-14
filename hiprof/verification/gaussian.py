@@ -193,12 +193,9 @@ class GaussianKernel:
         )
 
         right_mean_intercept = (
-            right.mean_intercept
-            + left_output_linear * self.mean_intercept
+            right.mean_intercept + left_output_linear * self.mean_intercept
         )
-        right_mean_linear = (
-            external_linear + left_output_linear * left_linear
-        )
+        right_mean_linear = external_linear + left_output_linear * left_linear
 
         cross_covariance = self.covariance * left_output_linear.transpose()
         right_covariance = (

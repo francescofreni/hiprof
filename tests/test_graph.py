@@ -50,8 +50,9 @@ def test_adjacency_to_graph_combines_reciprocal_arrows(
     assert graph == "T <-> Y"
 
 
-def test_adjacency_to_graph_defaults_names_and_retains_isolated_nodes(
-) -> None:
+def test_adjacency_to_graph_defaults_names_and_retains_isolated_nodes() -> (
+    None
+):
     graph = adjacency_to_graph(
         [[0, 1, 0], [0, 0, 0], [0, 0, 0]],
     )

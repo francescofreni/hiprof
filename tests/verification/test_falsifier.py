@@ -17,7 +17,6 @@ from hiprof.verification.falsifier import (
     _zippel_ratio,
 )
 
-
 NAPKIN_GRAPH = "X -> Y; W -> Z; Z -> X; X <-> W; W <-> Y"
 
 NAPKIN_CONDITIONAL_FORMULA = """

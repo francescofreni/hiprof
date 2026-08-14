@@ -17,7 +17,6 @@ from hiprof.formula.validation import parse_and_validate
 from hiprof.graph import Graph, Node, parse_graph
 from hiprof.utils import validate_variables
 
-
 _dsl: Any | None = None
 _identify_outcomes: Any | None = None
 _mixed_graph: Any | None = None

@@ -5,7 +5,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
-
 VARIABLE = r"[A-Z]+(?:0|[1-9][0-9]*)?"
 VARIABLE_PATTERN = re.compile(rf"^{VARIABLE}$")
 EDGE_PATTERN = re.compile(r"<->|->")
@@ -359,9 +358,7 @@ def _normalise_node_names(
     size: int,
 ) -> list[str]:
     node_names = (
-        list(nodes)
-        if nodes is not None
-        else [f"X{i}" for i in range(size)]
+        list(nodes) if nodes is not None else [f"X{i}" for i in range(size)]
     )
     if len(node_names) != size:
         raise ValueError(

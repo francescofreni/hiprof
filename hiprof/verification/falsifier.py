@@ -18,7 +18,6 @@ from .degree import DegreeBound, DegreeBoundEvaluator
 from .gaussian import GaussianDistribution, GaussianEvaluator, GaussianKernel
 from .utils import submatrix
 
-
 _DEFAULT_ENTROPY_BITS = 64
 _DEFAULT_TARGET_BOUND = Fraction(1, 10**14)
 
@@ -79,9 +78,7 @@ class _LinearGaussianSCM:
         return GaussianDistribution(
             variables=tuple(Variable(name) for name in self.variables),
             mean=inverse * self.intercepts,
-            covariance=(
-                inverse * self.noise_covariance * inverse.transpose()
-            ),
+            covariance=(inverse * self.noise_covariance * inverse.transpose()),
         )
 
     def interventional_kernel(
@@ -418,9 +415,7 @@ class HPFalsifier:
         validated: ValidationResult,
         declared_redundant_inputs: frozenset[Variable],
     ) -> None:
-        expected_outputs = frozenset(
-            Variable(name) for name in self.outcomes
-        )
+        expected_outputs = frozenset(Variable(name) for name in self.outcomes)
 
         if validated.signature.outputs != expected_outputs:
             raise ValueError(

@@ -2,6 +2,30 @@
 
 # Hi Prof 👋: High-Probability Falsifier
 
+> We formalize _verification_ in causal graphical models: 
+> deciding whether a given observational formula identifies 
+> a target interventional distribution. This opens a problem 
+> complementary to identification, asking not whether any 
+> identifying formula exists, but whether the given formula is
+> identifying. We show that even sound and complete solutions to
+> identification do not solve verification. We propose a 
+> falsifier as a first practical route forward, prove that it 
+> induces an almost-surely correct verifier for regular 
+> exponential-family models, and use the resulting verifier to 
+> develop the gateway test, which finds all sets admissible for 
+> use in a front-door formula. 
+
+If you publish research using `hiprof`, please cite
+[our paper](https://arxiv.org/pdf/2607.13883) introducing verification:
+```bibtex
+@article{hiprof2026,
+  author  = {Francesco Freni and Leonard Henckel and Sebastian Weichwald},
+  title   = {{Verifying formulas for interventional distributions}},
+  journal = {{arXiv preprint arXiv:2607.13883}},
+  year    = {2026}
+}
+```
+
 [Feedback](https://github.com/francescofreni/hiprof/issues/new/choose) very welcome!
 
 ## ⚙️ Installation
@@ -132,17 +156,4 @@ pip install -e ".[all]"
 Run the test suite with
 ```bash
 pytest
-```
-
-
-## 📜 Citation
-
-If you use `hiprof` in your scientific work, please cite [this paper](https://arxiv.org/abs/2607.13883) introducing verification:
-```bibtex
-@article{hiprof2026,
-  author  = {Francesco Freni and Leonard Henckel and Sebastian Weichwald},
-  title   = {{Verifying formulas for interventional distributions}},
-  journal = {{arXiv preprint arXiv:2607.13883}},
-  year    = {2026}
-}
 ```

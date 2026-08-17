@@ -56,7 +56,7 @@ def main() -> None:
 
     print("\nADMG (ii): a longer directed mediator structure")
     falsifier = HPFalsifier(
-        graph="X -> A; A -> B; A -> C; B -> D; " "C -> D; D -> Y; X <-> Y",
+        graph="X -> A; A -> B; A -> C; B -> D; C -> D; D -> Y; X <-> Y",
         treatments="X",
         outcomes="Y",
     )
@@ -78,7 +78,7 @@ def main() -> None:
         "but the front-door formulas are still valid."
     )
     falsifier = HPFalsifier(
-        graph="X -> A; A -> Y; X <-> Y; B -> Y; C -> Y; " "D -> B; D -> C",
+        graph="X -> A; A -> Y; X <-> Y; B -> Y; C -> Y; D -> B; D -> C",
         treatments="X",
         outcomes="Y",
     )

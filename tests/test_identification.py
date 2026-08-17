@@ -196,7 +196,7 @@ def test_y0_renderer_formats_products_sums_and_treatment_copies() -> None:
     ).render(expression)
 
     assert rendered == (
-        "sum_{Z}{ p(Z | X) * " "sum_{X'}{ p(Y | X', Z) * p(X') } }"
+        "sum_{Z}{ p(Z | X) * sum_{X'}{ p(Y | X', Z) * p(X') } }"
     )
     assert parse_and_validate(rendered).signature.outputs
 

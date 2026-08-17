@@ -1,4 +1,4 @@
-![](https://img.shields.io/badge/python-≥3.10-blue)
+![](https://img.shields.io/badge/python-≥3.11-blue)
 
 # Hi Prof 👋: High-Probability Falsifier
 

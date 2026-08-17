@@ -19,7 +19,7 @@ name = "hiprof"
 version = "0.1.0"
 description = "Hi Prof 👋: High-Probability Falsifier"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
 authors = [
@@ -68,10 +68,10 @@ dev = [
 
 [tool.black]
 line-length = 79
-target-version = ['py310']
+target-version = ['py311']
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_unused_ignores = true
 warn_unused_configs = true
 warn_return_any = true
@@ -83,7 +83,7 @@ no_implicit_optional = true
 disallow_untyped_defs = true
 
 [tool.pyright]
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 reportPrivateImportUsage = "none"
 
 [tool.pytest.ini_options]
@@ -101,7 +101,7 @@ markers = [
 
 [tool.ruff]
 line-length = 79
-target-version = "py310"
+target-version = "py311"
 output-format = "grouped"
 
 [tool.ruff.lint]

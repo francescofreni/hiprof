@@ -16,7 +16,7 @@ requires = [
 
 [project]
 name = "hiprof"
-version = "0.1.0"
+version = "0.1.0rc1"
 description = "Hi Prof 👋: High-Probability Falsifier"
 readme = "README.md"
 requires-python = ">=3.11"

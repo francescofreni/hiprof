@@ -1,15 +1,30 @@
-build/
-*.egg-info/
-*.csv
-*.txt
-*.png
-.idea/
-*.pdf
-
-!images/*.png
-!images/*.pdf
-
+# Python bytecode
 __pycache__/
 *.py[cod]
 
+# Packaging/build artifacts
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+venv_*/
+.env
+
+# Tool caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local/editor files
+.idea/
+.vscode/
 .DS_Store

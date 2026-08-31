@@ -11,9 +11,9 @@
 > identification do not solve verification. We propose a 
 > falsifier as a first practical route forward, prove that it 
 > induces an almost-surely correct verifier for regular 
-> exponential-family models, and use the resulting verifier to 
-> develop the gateway test, which finds all sets admissible for 
-> use in a front-door formula. 
+> exponential-family models, and describe the gateway test,
+> a natural application of the resulting verifier that 
+> finds all sets admissible for use in a front-door formula.
 
 If you publish research using `hiprof`, please cite
 [our paper](https://arxiv.org/pdf/2607.13883) introducing verification:

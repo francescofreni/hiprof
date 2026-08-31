@@ -74,17 +74,18 @@ class FakeMixedGraph:
         self.nodes.add(variable)
 
 
+def default_identify(*args: Any, **kwargs: Any) -> None:
+    return None
+
+
 def install_fake_y0(
     monkeypatch: pytest.MonkeyPatch,
     identify: Callable[..., Any] | None = None,
 ) -> None:
-    if identify is None:
-
-        def identify(*args: Any, **kwargs: Any) -> None:
-            return None
-
     monkeypatch.setattr(identification, "_dsl", FAKE_DSL)
-    monkeypatch.setattr(identification, "_identify_outcomes", identify)
+    monkeypatch.setattr(
+        identification, "_identify_outcomes", identify or default_identify
+    )
     monkeypatch.setattr(identification, "_mixed_graph", FakeMixedGraph)
 
 
@@ -136,11 +137,13 @@ def test_id_algorithm_run_passes_query_and_renders_formula(
         *,
         treatments: set[FakeVariable],
         outcomes: set[FakeVariable],
+        conditions: set[FakeVariable] | None = None,
     ) -> FakeProbability:
         calls.update(
             graph=graph,
             treatments=treatments,
             outcomes=outcomes,
+            conditions=conditions,
         )
         return probability((y,), (x,))
 
@@ -156,7 +159,55 @@ def test_id_algorithm_run_passes_query_and_renders_formula(
         "graph": algorithm._graph,
         "treatments": {x},
         "outcomes": {y},
+        "conditions": None,
     }
+
+
+def test_id_algorithm_run_passes_conditioning_set_as_conditions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, Any] = {}
+    c = FakeVariable("C")
+    x = FakeVariable("X")
+    y = FakeVariable("Y")
+
+    def identify(
+        graph: FakeMixedGraph,
+        *,
+        treatments: set[FakeVariable],
+        outcomes: set[FakeVariable],
+        conditions: set[FakeVariable] | None = None,
+    ) -> FakeProbability:
+        calls["conditions"] = conditions
+        return probability((y,), (c, x))
+
+    install_fake_y0(monkeypatch, identify)
+    algorithm = identification.IDAlgorithm(
+        "C -> X; C -> Y; X -> Y",
+        treatments="X",
+        outcomes="Y",
+        conditioning_set="C",
+    )
+
+    assert algorithm.run() == "p(Y | C, X)"
+    assert calls == {"conditions": {FakeVariable("C")}}
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"treatments": "X", "outcomes": "Y", "conditioning_set": "X"},
+        {"treatments": "X", "outcomes": "Y", "conditioning_set": "Y"},
+    ],
+)
+def test_id_algorithm_rejects_conditioning_set_overlapping_query(
+    monkeypatch: pytest.MonkeyPatch,
+    kwargs: dict[str, str],
+) -> None:
+    install_fake_y0(monkeypatch)
+
+    with pytest.raises(ValueError, match="must be disjoint"):
+        identification.IDAlgorithm("C -> X; C -> Y; X -> Y", **kwargs)
 
 
 def test_id_algorithm_run_returns_none_for_nonidentifiable_query(
@@ -222,3 +273,16 @@ def test_y0_renderer_handles_supported_and_arbitrary_fractions() -> None:
 
     with pytest.raises(NotImplementedError, match="arbitrary y0 fraction"):
         renderer.render(FakeFraction(numerator, probability((x,))))
+
+
+def test_y0_renderer_collapses_trivial_self_normalization() -> None:
+    # IDC always normalises its estimand by marginalising out the
+    # outcomes, even when nothing was left to condition on.
+    x = FakeVariable("X")
+    y = FakeVariable("Y")
+    numerator = probability((y,), (x,))
+    denominator = FakeSum(expression=numerator, ranges=(y,))
+
+    renderer = identification._Y0Renderer(treatments=("X",), dsl=FAKE_DSL)
+
+    assert renderer.render(FakeFraction(numerator, denominator)) == "p(Y | X)"

@@ -250,7 +250,7 @@ def test_check_rejects_query_variables_as_redundant(
 
     with pytest.raises(
         ValueError,
-        match="distinct from treatments and outcomes",
+        match="distinct from treatments, outcomes, and the conditioning set",
     ):
         falsifier.check(
             "p(Y | X)",
@@ -273,6 +273,53 @@ def test_check_rejects_redundant_inputs_for_none_formula() -> None:
             None,
             redundant_inputs="Z",
         )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"treatments": "X", "outcomes": "Y", "conditioning_set": "X"},
+        {"treatments": "X", "outcomes": "Y", "conditioning_set": "Y"},
+    ],
+)
+def test_falsifier_rejects_conditioning_set_overlapping_query(
+    kwargs: dict[str, str],
+) -> None:
+    with pytest.raises(ValueError, match="must be disjoint"):
+        HPFalsifier("C -> X; C -> Y; X -> Y", **kwargs)
+
+
+def test_check_rejects_redundant_input_overlapping_conditioning_set() -> None:
+    falsifier = HPFalsifier(
+        graph="C -> X; C -> Y; X -> Y",
+        treatments="X",
+        outcomes="Y",
+        conditioning_set="C",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="distinct from treatments, outcomes, and the conditioning set",
+    ):
+        falsifier.check("p(Y | X, C)", redundant_inputs="C")
+
+
+def test_check_accepts_conditional_formula_with_conditioning_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "hiprof.verification.falsifier.getrandbits",
+        fixed_getrandbits,
+    )
+    falsifier = HPFalsifier(
+        graph="C -> X; C -> Y; X -> Y",
+        treatments="X",
+        outcomes="Y",
+        conditioning_set="C",
+    )
+
+    assert falsifier.check("p(Y | X, C)").accepted
+    assert not falsifier.check("p(Y | X)").accepted
 
 
 def test_falsifier_validates_graph_and_query_inputs() -> None:
@@ -456,7 +503,7 @@ def test_target_bound_validation_rejects_out_of_range(
 
 
 def test_bound_planning_helpers_are_deterministic() -> None:
-    degree = _equality_test_degree(DegreeBound(2, 3, 4, 5), 3)
+    degree = _equality_test_degree(DegreeBound(2, 3, 4, 5), 3, 0)
 
     assert degree == 10
     assert _zippel_ratio(10, 4) == Fraction(10, 16)
@@ -464,6 +511,13 @@ def test_bound_planning_helpers_are_deterministic() -> None:
         3,
         Fraction(1, 8),
     )
+
+
+def test_equality_test_degree_grows_with_conditioning_size() -> None:
+    candidate = DegreeBound(2, 3, 4, 5)
+
+    assert _equality_test_degree(candidate, 3, 1) == 15
+    assert _equality_test_degree(candidate, 3, 2) == 20
 
 
 def test_minimum_bits_produces_bound_below_half() -> None:

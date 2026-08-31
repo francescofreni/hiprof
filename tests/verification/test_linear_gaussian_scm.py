@@ -84,3 +84,21 @@ def test_interventional_kernel_includes_direct_and_mediated_effects() -> None:
         mean_linear=fmpq_mat(2, 1, [2, 13]),
         covariance=fmpq_mat(2, 2, [17, 85, 85, 444]),
     )
+
+
+def test_interventional_kernel_supports_conditioning_set() -> None:
+    # Conditioning on the mediator M leaves only Y's direct structural
+    # dependence on X and M, with the residual noise variance of Y.
+    kernel = three_variable_scm().interventional_kernel(
+        treatments=("X",),
+        outcomes=("Y",),
+        conditioning_set=("M",),
+    )
+
+    assert kernel == GaussianKernel(
+        outputs=(Variable("Y"),),
+        inputs=(Variable("X"), Variable("M")),
+        mean_intercept=fmpq_mat(1, 1, [11]),
+        mean_linear=fmpq_mat(1, 2, [3, 5]),
+        covariance=fmpq_mat(1, 1, [19]),
+    )

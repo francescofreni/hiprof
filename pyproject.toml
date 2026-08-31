@@ -44,14 +44,6 @@ identification = [
     "y0==0.2.11",
 ]
 
-nonidentifiability = [
-    "ananke-causal",
-]
-
-all = [
-    "hiprof[identification,nonidentifiability]"
-]
-
 dev = [
     "black[d]",
     "coverage",

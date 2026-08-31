@@ -2,122 +2,69 @@ from __future__ import annotations
 
 import builtins
 import sys
+from dataclasses import dataclass
 from types import ModuleType
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 
 from hiprof import HPFalsifier
 
 
-def install_fake_ananke(monkeypatch: pytest.MonkeyPatch) -> None:
-    ananke = ModuleType("ananke")
-    graphs = ModuleType("ananke.graphs")
-    admg = ModuleType("ananke.graphs.admg")
-    identification = ModuleType("ananke.identification")
-    admg.latent_project_single_vertex = lambda: None  # type: ignore[attr-defined]
-    ananke.graphs = graphs  # type: ignore[attr-defined]
-    ananke.identification = identification  # type: ignore[attr-defined]
-
-    monkeypatch.setitem(sys.modules, "ananke", ananke)
-    monkeypatch.setitem(sys.modules, "ananke.graphs", graphs)
-    monkeypatch.setitem(sys.modules, "ananke.graphs.admg", admg)
-    monkeypatch.setitem(sys.modules, "ananke.identification", identification)
+@dataclass(frozen=True)
+class FakeVariable:
+    name: str
 
 
-def test_check_none_rejects_fully_observed_nonidentifiability_claim(
+class FakeMixedGraph:
+    def __init__(
+        self,
+        directed: list[tuple[FakeVariable, FakeVariable]],
+        undirected: list[tuple[FakeVariable, FakeVariable]],
+    ) -> None:
+        self.directed = tuple(directed)
+        self.undirected = tuple(undirected)
+        self.nodes: set[FakeVariable] = set()
+
+    @classmethod
+    def from_edges(
+        cls,
+        directed: list[tuple[FakeVariable, FakeVariable]],
+        undirected: list[tuple[FakeVariable, FakeVariable]],
+    ) -> FakeMixedGraph:
+        return cls(directed, undirected)
+
+    def add_node(self, variable: FakeVariable) -> None:
+        self.nodes.add(variable)
+
+
+def default_identify_outcomes(*args: Any, **kwargs: Any) -> None:
+    return None
+
+
+def install_fake_y0(
     monkeypatch: pytest.MonkeyPatch,
+    identify_outcomes: Callable[..., Any] | None = None,
 ) -> None:
-    install_fake_ananke(monkeypatch)
-    falsifier = HPFalsifier(
-        "X -> Y",
-        treatments="X",
-        outcomes="Y",
+    identify_module = ModuleType("y0.algorithm.identify")
+    identify_module.identify_outcomes = (  # type: ignore[attr-defined]
+        identify_outcomes or default_identify_outcomes
     )
+    dsl_module = ModuleType("y0.dsl")
+    dsl_module.Variable = FakeVariable  # type: ignore[attr-defined]
+    graph_module = ModuleType("y0.graph")
+    graph_module.NxMixedGraph = FakeMixedGraph  # type: ignore[attr-defined]
 
-    result = falsifier.check(None)
-
-    assert not result.accepted
-
-
-def test_check_none_projects_explicit_latent_dag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: dict[str, Any] = {}
-
-    class FakeDAG:
-        def __init__(
-            self,
-            vertices: list[str],
-            di_edges: list[tuple[str, str]],
-        ) -> None:
-            calls["vertices"] = vertices
-            calls["di_edges"] = di_edges
-
-        @staticmethod
-        def topological_sort() -> tuple[str, ...]:
-            return "U", "X", "Y"
-
-    def latent_project_single_vertex(vertex: str, graph: Any) -> object:
-        calls.setdefault("projected", []).append(vertex)
-        return "projected", vertex, graph
-
-    class FakeOneLineID:
-        def __init__(
-            self,
-            graph: Any,
-            treatments: tuple[str, ...],
-            outcomes: tuple[str, ...],
-        ) -> None:
-            calls["id_graph"] = graph
-            calls["treatments"] = treatments
-            calls["outcomes"] = outcomes
-
-        @staticmethod
-        def id() -> bool:
-            return False
-
-    ananke = ModuleType("ananke")
-    graphs = ModuleType("ananke.graphs")
-    admg = ModuleType("ananke.graphs.admg")
-    identification = ModuleType("ananke.identification")
-    graphs.DAG = FakeDAG  # type: ignore[attr-defined]
-    admg.latent_project_single_vertex = (  # type: ignore[attr-defined]
-        latent_project_single_vertex
+    monkeypatch.setitem(sys.modules, "y0", ModuleType("y0"))
+    monkeypatch.setitem(
+        sys.modules, "y0.algorithm", ModuleType("y0.algorithm")
     )
-    identification.OneLineID = FakeOneLineID  # type: ignore[attr-defined]
-    ananke.graphs = graphs  # type: ignore[attr-defined]
-    ananke.identification = identification  # type: ignore[attr-defined]
-
-    monkeypatch.setitem(sys.modules, "ananke", ananke)
-    monkeypatch.setitem(sys.modules, "ananke.graphs", graphs)
-    monkeypatch.setitem(sys.modules, "ananke.graphs.admg", admg)
-    monkeypatch.setitem(sys.modules, "ananke.identification", identification)
-
-    falsifier = HPFalsifier(
-        "U -> X; U -> Y; X -> Y",
-        treatments="X",
-        outcomes="Y",
-        latents="U",
-    )
-
-    result = falsifier.check(None)
-
-    assert result.accepted
-    assert calls["vertices"] == ["U", "X", "Y"]
-    assert set(calls["di_edges"]) == {
-        ("U", "X"),
-        ("U", "Y"),
-        ("X", "Y"),
-    }
-    assert calls["projected"] == ["U"]
-    assert calls["treatments"] == ("X",)
-    assert calls["outcomes"] == ("Y",)
+    monkeypatch.setitem(sys.modules, "y0.algorithm.identify", identify_module)
+    monkeypatch.setitem(sys.modules, "y0.dsl", dsl_module)
+    monkeypatch.setitem(sys.modules, "y0.graph", graph_module)
 
 
-def test_check_none_without_ananke_raises_informative_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def block_y0_import(monkeypatch: pytest.MonkeyPatch) -> None:
     real_import = builtins.__import__
 
     def fake_import(
@@ -127,24 +74,89 @@ def test_check_none_without_ananke_raises_informative_error(
         fromlist: tuple[str, ...] = (),
         level: int = 0,
     ) -> Any:
-        if name == "ananke" or name.startswith("ananke."):
+        if name == "y0" or name.startswith("y0."):
             raise ModuleNotFoundError(
-                "No module named 'ananke'",
-                name="ananke",
+                "No module named 'y0'",
+                name="y0",
             )
 
         return real_import(name, glob, loc, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
+
+def test_check_none_accepts_fully_observed_claim_without_y0(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A fully observed graph is trivially identifiable, so `check(None)`
+    # must not even attempt to import the optional y0 dependency.
+    block_y0_import(monkeypatch)
+    falsifier = HPFalsifier("X -> Y", treatments="X", outcomes="Y")
+
+    result = falsifier.check(None)
+
+    assert not result.accepted
+
+
+def test_check_none_without_y0_raises_informative_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    block_y0_import(monkeypatch)
     falsifier = HPFalsifier(
         "X -> Y; X <-> Y",
         treatments="X",
         outcomes="Y",
     )
 
-    with pytest.raises(
-        ImportError,
-        match=r"hiprof\[nonidentifiability\]",
-    ):
+    with pytest.raises(ImportError, match=r"hiprof\[identification\]"):
         falsifier.check(None)
+
+
+@pytest.mark.parametrize(
+    ("identified", "expected_accepted"),
+    [
+        (None, True),
+        ("estimand", False),
+    ],
+)
+def test_check_none_result_follows_identify_outcomes(
+    monkeypatch: pytest.MonkeyPatch,
+    identified: object,
+    expected_accepted: bool,
+) -> None:
+    install_fake_y0(monkeypatch, lambda *args, **kwargs: identified)
+    falsifier = HPFalsifier(
+        "X -> Y; X <-> Y",
+        treatments="X",
+        outcomes="Y",
+    )
+
+    assert falsifier.check(None).accepted is expected_accepted
+
+
+def test_check_none_passes_conditioning_set_as_conditions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, Any] = {}
+
+    def identify_outcomes(
+        graph: FakeMixedGraph,
+        *,
+        treatments: set[FakeVariable],
+        outcomes: set[FakeVariable],
+        conditions: set[FakeVariable] | None = None,
+    ) -> None:
+        calls["conditions"] = conditions
+        return None
+
+    install_fake_y0(monkeypatch, identify_outcomes)
+    falsifier = HPFalsifier(
+        "X -> Z; Z -> Y; X -> Y; Z <-> Y",
+        treatments="X",
+        outcomes="Y",
+        conditioning_set="Z",
+    )
+
+    falsifier.check(None)
+
+    assert calls == {"conditions": {FakeVariable("Z")}}

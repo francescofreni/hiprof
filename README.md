@@ -11,9 +11,9 @@
 > identification do not solve verification. We propose a 
 > falsifier as a first practical route forward, prove that it 
 > induces an almost-surely correct verifier for regular 
-> exponential-family models, and use the resulting verifier to 
-> develop the gateway test, which finds all sets admissible for 
-> use in a front-door formula. 
+> exponential-family models, and describe the gateway test,
+> a natural application of the resulting verifier that 
+> finds all sets admissible for use in a front-door formula.
 
 If you publish research using `hiprof`, please cite
 [our paper](https://arxiv.org/pdf/2607.13883) introducing verification:
@@ -49,26 +49,15 @@ uv venv
 uv pip install "hiprof @ git+https://github.com/francescofreni/hiprof.git"
 ```
 
-Two optional feature gates provide additional functionality:
+The optional feature gate `identification` installs
+[`y0`](https://github.com/y0-causal-inference/y0) and enables
+`IDAlgorithm`, which derives an identifying formula when one is available,
+and verification of non-identifiability claims (`formula=None`).
 
-- `identification` installs
-  [`y0`](https://github.com/y0-causal-inference/y0) and enables
-  `IDAlgorithm`, which derives an identifying formula when one is available;
-- `nonidentifiability` installs
-  [`ananke-causal`](https://gitlab.com/causal/ananke) and enables verification
-  of non-identifiability claims.
-
-Install optional features individually:
+Install it with:
 
 ```bash
 pip install "hiprof[identification] @ git+https://github.com/francescofreni/hiprof.git"
-pip install "hiprof[nonidentifiability] @ git+https://github.com/francescofreni/hiprof.git"
-```
-
-or install all optional features:
-
-```bash
-pip install "hiprof[all] @ git+https://github.com/francescofreni/hiprof.git"
 ```
 
 The same requirement strings can be used with `uv pip install`.
@@ -150,7 +139,7 @@ pip install -e .
 To include the optional features:
 
 ```bash
-pip install -e ".[all]"
+pip install -e ".[identification]"
 ```
 
 Run the test suite with

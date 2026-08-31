@@ -60,6 +60,7 @@ class IDAlgorithm:
         treatments: str | Sequence[str],
         outcomes: str | Sequence[str],
         latents: str | Sequence[str] | None = None,
+        conditioning_set: str | Sequence[str] | None = None,
     ) -> None:
         """Initialise the ID algorithm for a causal query.
 
@@ -71,12 +72,16 @@ class IDAlgorithm:
             variable names.
         :param latents: Variable name, or sequence of variable names, to treat
             as unobserved. Every latent variable must be a node in ``graph``.
+        :param conditioning_set: Variable name, or sequence of variable
+            names, to additionally condition on, that is, the target becomes
+            ``p(outcomes | do(treatments), conditioning_set)``. Must be
+            disjoint from treatments and outcomes.
         :raises ImportError: If the optional identification dependencies are
             not installed.
-        :raises TypeError: If treatments, outcomes, or latents have invalid
-            types.
-        :raises ValueError: If the graph, treatments, outcomes, or latents are
-            invalid.
+        :raises TypeError: If treatments, outcomes, latents, or
+            conditioning_set have invalid types.
+        :raises ValueError: If the graph, treatments, outcomes, latents, or
+            conditioning_set are invalid.
         """
         if _dsl is None or _identify_outcomes is None or _mixed_graph is None:
             raise ImportError(
@@ -114,12 +119,36 @@ class IDAlgorithm:
             graph=self.graph,
         )
 
-        overlap = sorted(set(self.treatments) & set(self.outcomes))
-        if overlap:
-            raise ValueError(
-                "Treatments and outcomes must be disjoint. "
-                f"Overlapping variables: {', '.join(overlap)}."
+        if conditioning_set is None:
+            self.conditioning_set: tuple[str, ...] = ()
+        else:
+            self.conditioning_set = validate_variables(
+                conditioning_set,
+                name="Conditioning set",
+                graph=self.graph,
             )
+
+        for label_a, set_a, label_b, set_b in (
+            ("Treatments", self.treatments, "outcomes", self.outcomes),
+            (
+                "Treatments",
+                self.treatments,
+                "the conditioning set",
+                self.conditioning_set,
+            ),
+            (
+                "Outcomes",
+                self.outcomes,
+                "the conditioning set",
+                self.conditioning_set,
+            ),
+        ):
+            overlap = sorted(set(set_a) & set(set_b))
+            if overlap:
+                raise ValueError(
+                    f"{label_a} and {label_b} must be disjoint. "
+                    f"Overlapping variables: {', '.join(overlap)}."
+                )
 
         self._variables = {
             name: self._dsl.Variable(name)
@@ -150,6 +179,10 @@ class IDAlgorithm:
     def run(self) -> str | None:
         """Run identification and render the result as a hiprof formula.
 
+        If a ``conditioning_set`` was given, the target is the conditional
+        interventional distribution ``p(outcomes | do(treatments),
+        conditioning_set)``, identified with the IDC algorithm.
+
         :returns: A formula string compatible with the hiprof grammar
             if the query is identifiable, otherwise ``None``.
         :raises ValueError: If the identified formula cannot be rendered into
@@ -159,11 +192,13 @@ class IDAlgorithm:
         """
         treatments = {self._variables[name] for name in self.treatments}
         outcomes = {self._variables[name] for name in self.outcomes}
+        conditions = {self._variables[name] for name in self.conditioning_set}
 
         formula = self._identify_outcomes(
             self._graph,
             treatments=treatments,
             outcomes=outcomes,
+            conditions=conditions or None,
         )
 
         if formula is None:
@@ -347,6 +382,15 @@ class _Y0Renderer:
     ) -> _RenderedExpression:
         numerator = self._render(fraction.numerator, bound_copies)
         denominator = self._render(fraction.denominator, bound_copies)
+
+        if (
+            isinstance(fraction.denominator, self._dsl.Sum)
+            and fraction.denominator.expression == fraction.numerator
+            and not denominator.outputs
+        ):
+            # The denominator marginalises every free variable out of the
+            # numerator, so it integrates to one.
+            return numerator
 
         outputs, inputs = _icd_signature(numerator, denominator)
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from fractions import Fraction
 from random import getrandbits
@@ -13,6 +12,7 @@ from hiprof.formula.validation import ValidationResult, parse_and_validate
 from hiprof.graph import parse_graph
 from hiprof.utils import format_variables
 
+from ..identification import _latent_projection
 from ..utils import validate_variables
 from .degree import DegreeBound, DegreeBoundEvaluator
 from .gaussian import GaussianDistribution, GaussianEvaluator, GaussianKernel
@@ -85,6 +85,7 @@ class _LinearGaussianSCM:
         self,
         treatments: tuple[str, ...],
         outcomes: tuple[str, ...],
+        conditioning_set: tuple[str, ...] = (),
     ) -> GaussianKernel:
         index = {
             variable: position
@@ -129,12 +130,13 @@ class _LinearGaussianSCM:
             original_index: position
             for position, original_index in enumerate(non_treatment_indices)
         }
+        output_variables = outcomes + conditioning_set
         output_indices = tuple(
-            non_treatment_position[index[name]] for name in outcomes
+            non_treatment_position[index[name]] for name in output_variables
         )
 
-        return GaussianKernel(
-            outputs=tuple(Variable(name) for name in outcomes),
+        kernel = GaussianKernel(
+            outputs=tuple(Variable(name) for name in output_variables),
             inputs=tuple(Variable(name) for name in treatments),
             mean_intercept=submatrix(
                 mean_intercept,
@@ -153,6 +155,13 @@ class _LinearGaussianSCM:
             ),
         )
 
+        if not conditioning_set:
+            return kernel
+
+        return kernel.condition_on(
+            tuple(Variable(name) for name in conditioning_set)
+        )
+
 
 class HPFalsifier:
     """High-probability falsifier of observational
@@ -169,6 +178,7 @@ class HPFalsifier:
         treatments: str | Sequence[str],
         outcomes: str | Sequence[str],
         latents: str | Sequence[str] | None = None,
+        conditioning_set: str | Sequence[str] | None = None,
     ) -> None:
         """Initialise a falsifier for a causal query.
 
@@ -180,10 +190,14 @@ class HPFalsifier:
             variable names.
         :param latents: Variable name, or sequence of variable names, to treat
             as unobserved. Every latent variable must be a node in ``graph``.
-        :raises TypeError: If treatments, outcomes, or latents have invalid
-            types.
-        :raises ValueError: If the graph, treatments, outcomes, or latents are
-            invalid.
+        :param conditioning_set: Variable name, or sequence of variable
+            names, to additionally condition on, that is, the target becomes
+            ``p(outcomes | do(treatments), conditioning_set)``. Must be
+            disjoint from treatments and outcomes.
+        :raises TypeError: If treatments, outcomes, latents, or
+            conditioning_set have invalid types.
+        :raises ValueError: If the graph, treatments, outcomes, latents, or
+            conditioning_set are invalid.
         """
         self.graph = parse_graph(graph)
 
@@ -210,12 +224,36 @@ class HPFalsifier:
             graph=self.graph,
         )
 
-        overlap = sorted(set(self.treatments) & set(self.outcomes))
-        if overlap:
-            raise ValueError(
-                "Treatments and outcomes must be disjoint. "
-                f"Overlapping variables: {', '.join(overlap)}."
+        if conditioning_set is None:
+            self.conditioning_set: tuple[str, ...] = ()
+        else:
+            self.conditioning_set = validate_variables(
+                conditioning_set,
+                name="Conditioning set",
+                graph=self.graph,
             )
+
+        for label_a, set_a, label_b, set_b in (
+            ("Treatments", self.treatments, "outcomes", self.outcomes),
+            (
+                "Treatments",
+                self.treatments,
+                "the conditioning set",
+                self.conditioning_set,
+            ),
+            (
+                "Outcomes",
+                self.outcomes,
+                "the conditioning set",
+                self.conditioning_set,
+            ),
+        ):
+            overlap = sorted(set(set_a) & set(set_b))
+            if overlap:
+                raise ValueError(
+                    f"{label_a} and {label_b} must be disjoint. "
+                    f"Overlapping variables: {', '.join(overlap)}."
+                )
 
     def check(
         self,
@@ -243,7 +281,7 @@ class HPFalsifier:
         :raises ValueError: If the formula is invalid for the configured graph
             or causal query.
         :raises ImportError: If ``formula`` is ``None`` and the optional
-            non-identifiability dependencies are not installed.
+            identification dependencies are not installed.
         """
         if formula is not None and not isinstance(formula, str):
             raise TypeError("formula must be a string or None.")
@@ -278,6 +316,7 @@ class HPFalsifier:
         equality_degree = _equality_test_degree(
             degree_bound,
             number_of_variables,
+            len(self.conditioning_set),
         )
         entropy_bits = _DEFAULT_ENTROPY_BITS
         one_run_bound = _zippel_ratio(
@@ -305,7 +344,9 @@ class HPFalsifier:
             )
 
         target_outputs = tuple(Variable(name) for name in self.outcomes)
-        target_inputs = tuple(Variable(name) for name in self.treatments)
+        target_inputs = tuple(
+            Variable(name) for name in self.treatments
+        ) + tuple(Variable(name) for name in self.conditioning_set)
 
         for repetition in range(1, repetitions + 1):
             scm = self._sample_scm(entropy_bits)
@@ -315,6 +356,7 @@ class HPFalsifier:
             target_kernel = scm.interventional_kernel(
                 self.treatments,
                 self.outcomes,
+                self.conditioning_set,
             )
 
             if declared_redundant_inputs:
@@ -377,12 +419,14 @@ class HPFalsifier:
         )
 
         forbidden = frozenset(names) & (
-            frozenset(self.treatments) | frozenset(self.outcomes)
+            frozenset(self.treatments)
+            | frozenset(self.outcomes)
+            | frozenset(self.conditioning_set)
         )
         if forbidden:
             raise ValueError(
-                "Redundant inputs must be distinct from treatments and "
-                "outcomes. Invalid variables: "
+                "Redundant inputs must be distinct from treatments, "
+                "outcomes, and the conditioning set. Invalid variables: "
                 f"{', '.join(sorted(forbidden))}."
             )
 
@@ -424,16 +468,17 @@ class HPFalsifier:
                 f"{format_variables(validated.signature.outputs)}."
             )
 
-        treatment_inputs = frozenset(
+        allowed_inputs = frozenset(
             Variable(name) for name in self.treatments
-        )
-        extra_inputs = validated.signature.inputs - treatment_inputs
+        ) | frozenset(Variable(name) for name in self.conditioning_set)
+        extra_inputs = validated.signature.inputs - allowed_inputs
 
         undeclared_inputs = extra_inputs - declared_redundant_inputs
         if undeclared_inputs:
             names = sorted(variable.name for variable in undeclared_inputs)
             raise ValueError(
-                "The formula has free inputs other than the treatments: "
+                "The formula has free inputs other than the treatments "
+                "and the conditioning set: "
                 f"{format_variables(undeclared_inputs)}. These inputs must "
                 "either be eliminated from the final formula or explicitly "
                 "declared for invariance checking, for example "
@@ -449,67 +494,47 @@ class HPFalsifier:
             )
 
     def _is_identifiable(self) -> bool:
-        with warnings.catch_warnings():
-            # Suppress some Ananke-related warnings that are safe to ignore.
-            warnings.filterwarnings(
-                "ignore",
-                category=FutureWarning,
-                module="google.api_core",
-            )
-            warnings.filterwarnings(
-                "ignore",
-                message=".*IProgress not found.*",
-            )
-            warnings.filterwarnings(
-                "ignore",
-                category=FutureWarning,
-                module=r"pgmpy\..*",
-            )
+        if all(node.observed for node in self.graph.nodes.values()):
+            return True
 
-            try:
-                from ananke import graphs, identification
-                from ananke.graphs.admg import latent_project_single_vertex
-            except ImportError as error:
-                raise ImportError(
-                    "Verifying non-identifiability claims (`formula=None`) "
-                    "requires the optional `ananke-causal` dependency. "
-                    "Install it with "
-                    '`pip install "hiprof[nonidentifiability]"`.'
-                ) from error
+        try:
+            from y0.algorithm.identify import identify_outcomes
+            from y0.dsl import Variable as Y0Variable
+            from y0.graph import NxMixedGraph
+        except ImportError as error:
+            raise ImportError(
+                "Verifying non-identifiability claims (`formula=None`) "
+                "requires the optional `y0` dependency. Install it with "
+                '`pip install "hiprof[identification]"`.'
+            ) from error
 
-            if all(node.observed for node in self.graph.nodes.values()):
-                return True
+        variables = {
+            name: Y0Variable(name)
+            for name, node in self.graph.nodes.items()
+            if node.observed
+        }
+        directed_edges, bidirected_edges = _latent_projection(self.graph)
+        admg = NxMixedGraph.from_edges(
+            directed=[
+                (variables[parent], variables[child])
+                for parent, child in sorted(directed_edges)
+            ],
+            undirected=[
+                (variables[left], variables[right])
+                for left, right in sorted(bidirected_edges)
+            ],
+        )
+        for variable in variables.values():
+            admg.add_node(variable)
 
-            observed_nodes = [
-                name
-                for name, node in self.graph.nodes.items()
-                if node.observed
-            ]
-            directed_edges = [
-                (parent.name, child.name)
-                for parent in self.graph.nodes.values()
-                for child in parent.children
-            ]
-
-            latent_dag = graphs.DAG(
-                vertices=list(self.graph.nodes),
-                di_edges=directed_edges,
-            )
-            admg = latent_dag
-            for variable in reversed(latent_dag.topological_sort()):
-                if variable not in observed_nodes:
-                    admg = latent_project_single_vertex(
-                        vertex=variable,
-                        graph=admg,
-                    )
-
-            return bool(
-                identification.OneLineID(
-                    admg,
-                    treatments=self.treatments,
-                    outcomes=self.outcomes,
-                ).id()
-            )
+        conditions = {variables[name] for name in self.conditioning_set}
+        formula = identify_outcomes(
+            admg,
+            treatments={variables[name] for name in self.treatments},
+            outcomes={variables[name] for name in self.outcomes},
+            conditions=conditions or None,
+        )
+        return formula is not None
 
     def _sample_scm(self, entropy_bits: int) -> _LinearGaussianSCM:
         if entropy_bits < 1:
@@ -570,15 +595,19 @@ def _validate_target_bound(
 def _equality_test_degree(
     candidate: DegreeBound,
     number_of_variables: int,
+    conditioning_size: int,
 ) -> int:
-    target_mean_degree = number_of_variables
-    target_covariance_degree = 2 * number_of_variables - 1
+    n = number_of_variables
+    target = DegreeBoundEvaluator.conditional_degree_bound(
+        DegreeBound(n, 0, 2 * n - 1, 0),
+        conditioning_size,
+    )
 
     return max(
-        candidate.mean_numerator,
-        candidate.mean_denominator + target_mean_degree,
-        candidate.covariance_numerator,
-        candidate.covariance_denominator + target_covariance_degree,
+        candidate.mean_numerator + target.mean_denominator,
+        target.mean_numerator + candidate.mean_denominator,
+        candidate.covariance_numerator + target.covariance_denominator,
+        target.covariance_numerator + candidate.covariance_denominator,
     )
 
 

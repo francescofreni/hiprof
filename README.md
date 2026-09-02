@@ -128,7 +128,7 @@ After cloning and installing the repository, the standalone examples in
 [`examples/`](./examples/) can be run from the repository root:
 
 ```bash
-python examples/front_door.py
+python examples/frontdoor.py
 python examples/napkin.py
 python examples/cross_graph_verification.py
 ````

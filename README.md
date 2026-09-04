@@ -30,23 +30,25 @@ If you publish research using `hiprof`, please cite
 
 ## ⚙️ Installation
 
-`hiprof` can be installed directly from GitHub using `pip`:
-``` zsh
+Install `hiprof` from PyPI using `pip`:
+
+```bash
 # create virtual environment (optional)
 python -m venv venv_hiprof
 source venv_hiprof/bin/activate
 
 # install hiprof
-pip install "hiprof @ git+https://github.com/francescofreni/hiprof.git"
+python -m pip install hiprof
 ```
 
 Alternatively, using `uv`:
-``` zsh
+
+```bash
 # create virtual environment (optional)
 uv venv
 
 # install hiprof
-uv pip install "hiprof @ git+https://github.com/francescofreni/hiprof.git"
+uv pip install hiprof
 ```
 
 Two optional feature gates provide additional functionality:
@@ -61,14 +63,14 @@ Two optional feature gates provide additional functionality:
 Install optional features individually:
 
 ```bash
-pip install "hiprof[identification] @ git+https://github.com/francescofreni/hiprof.git"
-pip install "hiprof[nonidentifiability] @ git+https://github.com/francescofreni/hiprof.git"
+python -m pip install "hiprof[identification]"
+python -m pip install "hiprof[nonidentifiability]"
 ```
 
 or install all optional features:
 
 ```bash
-pip install "hiprof[all] @ git+https://github.com/francescofreni/hiprof.git"
+python -m pip install "hiprof[all]"
 ```
 
 The same requirement strings can be used with `uv pip install`.
@@ -122,16 +124,17 @@ graph = adjacency_to_graph(
 ## 📚 Examples
 
 For a concise introduction, see
-[`notebooks/demo.ipynb`](./notebooks/demo.ipynb).
+[`notebooks/demo.ipynb`](https://github.com/francescofreni/hiprof/blob/main/notebooks/demo.ipynb).
 
 After cloning and installing the repository, the standalone examples in
-[`examples/`](./examples/) can be run from the repository root:
+[`examples/`](https://github.com/francescofreni/hiprof/tree/main/examples/)
+can be run from the repository root:
 
 ```bash
 python examples/frontdoor.py
 python examples/napkin.py
 python examples/cross_graph_verification.py
-````
+```
 
 `cross_graph_verification.py` uses `IDAlgorithm` and therefore requires the
 `identification` feature.
@@ -144,13 +147,13 @@ Clone the repository and install it in editable mode:
 ```bash
 git clone git@github.com:francescofreni/hiprof.git
 cd hiprof
-pip install -e .
+python -m pip install -e ".[dev]"
 ```
 
-To include the optional features:
+To include all optional features as well as the development tools:
 
 ```bash
-pip install -e ".[all]"
+python -m pip install -e ".[dev,all]"
 ```
 
 Run the test suite with

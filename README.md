@@ -1,5 +1,5 @@
 ![](https://img.shields.io/badge/python-≥3.11-blue)
-[![PyPI version](https://img.shields.io/pypi/v/hiprof.svg?color=orange)](https://pypi.org/project/hiprof/)
+[![PyPI version](https://img.shields.io/pypi/v/hiprof.svg?color=orange&logo=pypi)](https://pypi.org/project/hiprof/)
 [![read](https://badgen.net/badge/read/arXiv/b31b1b)](https://arxiv.org/abs/2607.13883)
 
 # Hi Prof 👋: High-Probability Falsifier
